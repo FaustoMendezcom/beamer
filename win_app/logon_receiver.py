@@ -76,6 +76,33 @@ class MemoryBook:
         self._settings = copy.deepcopy(settings)
 
 
+def beacon(own: dict) -> bytes:
+    """What the app's pairing service broadcasts with no code up (its name, platform and link port,
+    no id), so a paired machine finds this PC again where its address changed with the restart.
+    Pairing itself stays shut: no pairing socket listens here."""
+    from core import pairing
+
+    return pairing.encode({"type": pairing.MSG_BEACON, "name": own["name"], "port": own["port"],
+                           "pairing": pairing.PAIRING_V3, "platform": own["platform"]})
+
+
+def _announce_forever(own: dict) -> None:
+    import socket
+
+    from core import pairing
+
+    message = beacon(own)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    stop = threading.Event()
+    while not stop.wait(pairing.BEACON_INTERVAL_SECONDS):
+        for target in pairing.broadcast_targets(pairing.PAIRING_PORT):
+            try:
+                sock.sendto(message, target)
+            except OSError:
+                continue
+
+
 def _version() -> str:
     from pathlib import Path
 
@@ -118,5 +145,6 @@ def main() -> int:
     server.secure_desktop = lambda: True
     LOGGER.info("Sign-in screen receiver for %s, %d pairings", own["name"], len(settings["peers"]))
     server.start(own["port"])
+    threading.Thread(target=_announce_forever, args=(own,), name="Beamer-logon-beacon", daemon=True).start()
     threading.Event().wait()
     return 0

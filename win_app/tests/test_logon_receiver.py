@@ -31,6 +31,15 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual((own["name"], own["platform"], own["app"], own["caps"], own["port"]),
                          ("COR", "windows", "1.5.18", [], 24820))
 
+    def test_its_beacon_is_the_apps_with_no_code_up(self):
+        from core import pairing
+
+        sent = pairing.decode(logon_receiver.beacon(logon_receiver.identity(SETTINGS, "dev")))
+        self.assertEqual({key: sent[key] for key in ("type", "name", "port", "pairing", "platform")},
+                         {"type": "beacon", "name": "COR", "port": 24820, "pairing": 3, "platform": "windows"})
+        self.assertNotIn("id", sent)
+        self.assertNotIn("pair", sent)
+
     def test_no_machine_id_or_peers_is_refused(self):
         with self.assertRaises(ValueError):
             logon_receiver.identity(dict(SETTINGS, machine_id=""), "1.5.18")

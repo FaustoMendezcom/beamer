@@ -102,6 +102,8 @@ the driving machine as at the PC's own keyboard, and no credentials are stored a
   those pairings alone, as the same machine id, so the driving machines see the same PC. It never
   pairs (the pairing port is not opened) and never writes the copy; run the installer again after
   pairing.
+- **Found where its address changed.** Like the app with no pairing code up, it broadcasts its
+  name and link port every 2 s on the pairing port (no id), which paired machines dial by name.
 - **Keys and the pointer, nothing else.** Its `welcome` lists no optional capabilities: no
   clipboard, files, settings, layout or monitors messages reach it.
 - **Firewall**: `Beamer Sign-in Screen (TCP-In)`, inbound TCP on that port, Private profile, for
