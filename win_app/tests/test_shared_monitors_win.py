@@ -188,6 +188,16 @@ class SharedMonitorsTests(unittest.TestCase):
                             {"id": "GBT3403:802", "code": 7, "display": "1", "showing": False}])
         self.assertFalse(only.moves_picture())
 
+    def test_a_machine_paired_again_under_a_new_id_does_not_make_the_monitors_unshared(self):
+        self.monitors.poll()
+        self.announce()
+        self.monitors.set_peer("NEWID", [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": False},
+                                         {"id": "GBT3403:802", "code": 8, "display": "1", "showing": False}])
+        self.assertEqual(self.monitors.shared(), {})
+        self.assertTrue(self.monitors.keep_peers({"NEWID"}))
+        self.assertEqual(sorted(self.monitors.shared()), ["NEWID"])
+        self.assertFalse(self.monitors.keep_peers({"NEWID"}))
+
     def test_never_hides_every_display(self):
         only = shared_monitors_win.SharedMonitors(
             type("Ddc", (FakeDdc,), {"monitors": lambda self: [RIGHT, LEFT]})(), self.desktop,

@@ -2067,10 +2067,23 @@ class WindowsApplication(QWidget):
             host_since=since if type(since) is int and since > 0 else int(time.time()),
             own_id=self._config.machine_id if self._config else "")
         self.shared_monitors.start()
+        self._keep_monitor_peers()
         self.monitors_picture_timer = QTimer(self)
         self.monitors_picture_timer.setInterval(3000)
         self.monitors_picture_timer.timeout.connect(self._check_monitors_picture)
         self.monitors_picture_timer.start()
+
+    def _keep_monitor_peers(self) -> None:
+        """Only paired machines' shared-monitor announcements count, saved or not."""
+        monitors = getattr(self, "shared_monitors", None)
+        if monitors is None:
+            return
+        try:
+            paired = {entry.get("id") for entry in self.book.peers()}
+        except Exception:
+            return
+        if monitors.keep_peers(paired):
+            self._save_shared_monitors(peers=monitors.snapshot()["peers"])
 
     def _set_monitors_chord(self, chord) -> None:
         for watch in (self._monitors_chord_hook, self._monitors_chord_driven):
@@ -5753,6 +5766,7 @@ class WindowsApplication(QWidget):
         if self._config is None or self._closing:
             return
         self._pull_peer_fields()
+        self._keep_monitor_peers()
         linked = {protocol.id_text(peer) for peer in self._peer_caps()}
         self._profile_last_heard = {peer: heard for peer, heard in self._profile_last_heard.items() if peer in linked}
         for peer in linked:

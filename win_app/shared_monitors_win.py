@@ -122,8 +122,24 @@ class SharedMonitors:
     def forget_peer(self, peer: str) -> None:
         with self._lock:
             self._peers.pop(peer, None)
+            self._peer_host.pop(peer, None)
         self._apply_fence()
         self._changed()
+
+    def keep_peers(self, paired) -> bool:
+        """Forgets what peers no longer paired announced: a PC paired again comes back under a new
+        id, and its old announcement would make the monitors look shared by two PCs, so by none.
+        True when anything was forgotten."""
+        with self._lock:
+            gone = [peer for peer in self._peers if peer not in paired]
+            for peer in gone:
+                self._peers.pop(peer, None)
+                self._peer_host.pop(peer, None)
+        if gone:
+            LOGGER.info("Forgot the shared monitors of %d machine(s) no longer paired", len(gone))
+            self._apply_fence()
+            self._changed()
+        return bool(gone)
 
     def shared(self) -> Dict[str, List[dict]]:
         """{peer id: [{id, code, display, showing}]} as that peer announced them, for the
