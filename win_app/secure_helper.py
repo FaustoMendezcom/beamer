@@ -48,6 +48,8 @@ class Helper:
             if kind == secure_input.INPUTS:
                 records = secure_input.read_inputs(payload, self._size)
                 if not self.default_desktop and self._desktop().lower() == "default":
+                    LOGGER.warning("Refused input for the normal desktop: administrator windows are not allowed "
+                                   "(install with -ElevatedWindows)")
                     # FAILED, not REFUSED: this client may still use the secure desktop.
                     return secure_input.answer(secure_input.FAILED, "administrator windows are not allowed")
                 count = len(records) // self._size
@@ -222,6 +224,8 @@ def serve_forever(session: Optional[int] = None) -> None:
                 win32file.WriteFile(pipe, secure_input.answer(secure_input.REFUSED, why))
             else:
                 helper.default_desktop = info.get("elevated") is True or elevated_windows()
+                LOGGER.info("Serving %s (pid %s): elevated %s, administrator windows %s", info.get("path"),
+                            info.get("pid"), info.get("elevated"), "allowed" if helper.default_desktop else "not allowed")
                 while True:
                     kind, payload = _read_message(pipe)
                     win32file.WriteFile(pipe, helper.handle(kind, payload))

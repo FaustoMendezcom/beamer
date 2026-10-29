@@ -194,6 +194,7 @@ class Client:
         with self._lock:
             handle = self._connect()
             if handle is None:
+                self.last_answer = "no secure desktop helper reachable"
                 return FAILED, "no secure desktop helper"
             try:
                 handle.write(frame(kind, payload))
@@ -204,6 +205,7 @@ class Client:
                 self._close_locked()
                 self._failed_at = self._clock()
                 return FAILED, str(exc)
+            self.last_answer = f"{('ok', 'refused', 'failed')[status] if status < 3 else status}: {text}"
             if status == REFUSED:
                 if text != self.refused:
                     LOGGER.warning("The secure desktop helper refused Beamer: %s", text)

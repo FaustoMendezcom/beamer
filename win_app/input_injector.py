@@ -165,6 +165,7 @@ _secure_client = None
 # helper last said no to one, after which it is asked again only after HELPER_RETRY_SECONDS.
 _foreground_seen = [None, False]
 _administrator_refused_at = [float("-inf")]
+_helper_typing = [None]
 HELPER_RETRY_SECONDS = 5.0
 
 
@@ -183,6 +184,9 @@ def _administrator_window_in_front() -> bool:
         _foreground_seen[0], _foreground_seen[1] = hwnd, (
             blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS
             and blocker.pid not in (0, None, os.getpid()))
+        if _foreground_seen[1]:
+            LOGGER.info("An administrator window is in front (%s, class %r, elevated=%s); its input goes to the helper",
+                        blocker.process_name or "unknown", blocker.window_class, blocker.elevated)
     return _foreground_seen[1]
 
 
@@ -197,7 +201,12 @@ def _to_administrator_window(array, count: int) -> bool:
     if time.monotonic() - _administrator_refused_at[0] < HELPER_RETRY_SECONDS:
         return False
     if _to_secure_desktop(array, count, default_desktop=True):
+        if _helper_typing[0] != _foreground_seen[0]:
+            _helper_typing[0] = _foreground_seen[0]
+            LOGGER.info("The helper types into the administrator window")
         return True
+    LOGGER.warning("The helper did not type into the administrator window: %s",
+                   getattr(_secure_client, "last_answer", "") or "no answer")
     _administrator_refused_at[0] = time.monotonic()
     return False
 

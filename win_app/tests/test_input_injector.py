@@ -545,6 +545,7 @@ class AdministratorWindowTests(unittest.TestCase):
                               self.helped.append((count, default_desktop)) or self.helper_says),
             mock.patch.object(input_injector, "_foreground_seen", [None, False]),
             mock.patch.object(input_injector, "_administrator_refused_at", [float("-inf")]),
+            mock.patch.object(input_injector, "_helper_typing", [None]),
         ]
         for patch in patches:
             patch.start()
