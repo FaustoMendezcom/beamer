@@ -189,6 +189,22 @@ class PictureTests(unittest.TestCase):
         self.assertTrue(home["changed"])
         self.assertEqual(home["settings"]["layout"][PC1]["displays"], PC1_DISPLAYS)
 
+    def test_a_stale_picture_arriving_after_the_move_is_put_right(self):
+        away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                   own_displays=None, now=200)["settings"]
+        stale = dict(away, layout={**away["layout"], PC1: {**away["layout"][PC1], "x": 2, "w": 430, "h": 180},
+                                   PC2: {**away["layout"][PC2], "y": 130}})
+        fixed = crossing_state.shared_monitors_moved(stale, platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                    own_displays=None, now=300, all_displays=PC1_DISPLAYS)
+        self.assertTrue(fixed["send_picture"])
+        self.assertEqual({key: fixed["settings"]["layout"][PC1][key] for key in "xywh"},
+                         {"x": 217, "y": -90, "w": 215, "h": 90})
+        self.assertEqual({key: fixed["settings"]["layout"][PC2][key] for key in "xywh"},
+                         {"x": 2, "y": 0, "w": 430, "h": 90})
+        again = crossing_state.shared_monitors_moved(fixed["settings"], platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                    own_displays=None, now=400, all_displays=PC1_DISPLAYS)
+        self.assertFalse(again["send_picture"])
+
     def test_going_away_twice_keeps_the_first_home(self):
         held = self.settings()
         once = crossing_state.shared_monitors_moved(held, platform="pc", peer=PC2, away_keys=["0", "1"],

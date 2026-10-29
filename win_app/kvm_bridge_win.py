@@ -2152,7 +2152,7 @@ class WindowsApplication(QWidget):
             if self._window_settings_stale:
                 return False
             home = shared_monitors.state(settings)["home"]
-            if repair and (home is not None) == bool(away):
+            if repair and home is None and not away:
                 return False
             peer = next(iter(sorted(set(away.values()))), None) or (home or {}).get("peer")
             if peer is None:
@@ -2161,7 +2161,8 @@ class WindowsApplication(QWidget):
                         sorted(away) or "all", self._label_of(protocol.read_id(peer)) if away else "this PC")
             outcome = crossing_state.shared_monitors_moved(
                 settings, platform="pc", peer=peer, away_keys=list(away), own_displays=self._own_displays(),
-                now=time.time(), capable=self._layout_capable())
+                now=time.time(), capable=self._layout_capable(),
+                all_displays=getattr(desktop_win, "display_map_all", lambda: {})())
             self._carry_crossing(outcome)
             return bool(outcome["changed"])
 

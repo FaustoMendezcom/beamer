@@ -322,11 +322,15 @@ def displays_changed(settings, *, platform, own_displays, now, capable=()):
     return _outcome(settings, saved, result, tell=_tells(settings, saved), send_picture=changed)
 
 
-def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, now, capable=()):
+def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, now, capable=(),
+                          all_displays=None):
     """This machine's shared displays `away_keys` now show `peer` (or, empty, all show this machine
     again): the picture gives their place to `peer`'s tile, or puts this machine's tile back as it
     was and parks `peer`'s, so every machine's edges lead to whichever machine they show. Called
-    with the displays reported before they are hidden when going away, and after when coming home."""
+    with the displays reported before they are hidden when going away, and after when coming home.
+    Already away, the picture is rebuilt from the saved home and `all_displays` (every display of
+    this machine, the away ones too) and put back if it differs: a picture another machine built
+    before the move can arrive after it, stamped later, and undo it."""
     saved = _initial(settings, capable)
     own = saved.get("machine_id", "")
     held = saved.get(shared_monitors.SETTINGS_KEY)
@@ -343,12 +347,23 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
             held["home"]["peer"] = peer
             saved["layout"] = placed
             moved = True
+    elif away_keys and home is not None and isinstance(tile, dict) and all_displays:
+        base = copy.deepcopy(saved["layout"])
+        base[own].update({key: home[key] for key in ("x", "y", "w", "h") if key in home})
+        base[own]["displays"] = _stored_displays(all_displays)
+        base[own].pop("display_offsets", None)
+        if isinstance(home.get("display_offsets"), dict):
+            base[own]["display_offsets"] = copy.deepcopy(home["display_offsets"])
+        placed = shared_monitors.away_layout(base, own, home.get("peer", peer), away_keys)
+        if placed is not None and any(
+                {key: placed[name].get(key) for key in ("x", "y", "w", "h")}
+                != {key: saved["layout"].get(name, {}).get(key) for key in ("x", "y", "w", "h")}
+                for name in (own, home.get("peer", peer))):
+            saved["layout"] = placed
+            moved = True
     elif not away_keys and home is not None:
-        # As ways.refresh_displays stores them: the app reports return_edge.Rect.
-        screens = {key: ({"x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height}
-                         if isinstance(rect, return_edge.Rect) else rect)
-                   for key, rect in (own_displays or {}).items()}
-        saved["layout"] = shared_monitors.home_layout(saved["layout"], own, home.get("peer", peer), home, screens)
+        saved["layout"] = shared_monitors.home_layout(saved["layout"], own, home.get("peer", peer), home,
+                                                      _stored_displays(own_displays))
         held.pop("home", None)
         moved = True
     if moved:
@@ -357,6 +372,13 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
     result = _compile(saved, platform, capable=capable, now=now)
     saved = result["settings"]
     return _outcome(settings, saved, result, tell=_tells(settings, saved), send_picture=moved)
+
+
+def _stored_displays(displays) -> dict:
+    """Displays as ways.refresh_displays stores them: the app reports return_edge.Rect."""
+    return {key: ({"x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height}
+                  if isinstance(rect, return_edge.Rect) else dict(rect))
+            for key, rect in (displays or {}).items()}
 
 
 def paired(settings, *, platform, own_displays, now, capable=()):
