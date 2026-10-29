@@ -147,7 +147,10 @@ def _send_input(*inputs: INPUT) -> None:
         blocker = foreground_blocker()
         # An administrator window in front refuses an unelevated Beamer's input: the helper types
         # there where the installer allowed it (-ElevatedWindows), else it says no and this reports.
-        if blocker.elevated is True and not is_elevated() and _to_secure_desktop(array, count, default_desktop=True):
+        # Unknown counts too: a standard account may not even read another account's process, which
+        # is what an administrator window it was refused by usually is.
+        if (blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS and not is_elevated()
+                and _to_secure_desktop(array, count, default_desktop=True)):
             return
         report_input_problem(blocker, operation="SendInput", error=error)
         if blocker.window_class == GAMEINPUT_WINDOW_CLASS:
