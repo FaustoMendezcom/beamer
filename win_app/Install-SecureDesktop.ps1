@@ -131,6 +131,21 @@ if ($null -eq (Get-ItemProperty -Path $KeyPath -Name 'SetSasPolicy' -ErrorAction
     }
 }
 
+# The app's own inbound rules on private networks, as Install-Beamer.ps1 makes them: a Beamer.exe
+# copied in by hand has only what Windows asked about, often public alone, and is then unreachable
+# once the network is private. Rules for other programs of the same name are left alone.
+foreach ($rule in @(
+        @{ Name = 'Beamer Receiver (TCP-In)'; Protocol = 'TCP'; Port = 24820 },
+        @{ Name = 'Beamer Pairing (UDP-In)'; Protocol = 'UDP'; Port = 24821 },
+        @{ Name = 'Beamer Pairing (TCP-In)'; Protocol = 'TCP'; Port = 24821 })) {
+    $existing = @(Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue | Where-Object {
+        [string]::Equals(($_ | Get-NetFirewallApplicationFilter).Program, $ClientPath, [StringComparison]::OrdinalIgnoreCase) })
+    if (-not $existing) {
+        New-NetFirewallRule -DisplayName $rule.Name -Direction Inbound -Protocol $rule.Protocol -LocalPort $rule.Port `
+            -Action Allow -Profile Private -Program $ClientPath | Out-Null
+    }
+}
+
 # The sign-in screen receiver: this PC's pairings, readable by SYSTEM and administrators only, as
 # they hold the keys. A copy, refreshed by running this again; the receiver never writes it.
 Remove-Item -Path $LogonDir -Recurse -Force -ErrorAction SilentlyContinue
