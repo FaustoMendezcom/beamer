@@ -2157,12 +2157,13 @@ class WindowsApplication(QWidget):
             peer = next(iter(sorted(set(away.values()))), None) or (home or {}).get("peer")
             if peer is None:
                 return False
-            LOGGER.info("%s shared monitors %s now show %s", "Repairing the picture:" if repair else "",
-                        sorted(away) or "all", self._label_of(protocol.read_id(peer)) if away else "this PC")
             outcome = crossing_state.shared_monitors_moved(
                 settings, platform="pc", peer=peer, away_keys=list(away), own_displays=self._own_displays(),
                 now=time.time(), capable=self._layout_capable(),
                 all_displays=getattr(desktop_win, "display_map_all", lambda: {})())
+            if outcome["send_picture"] or not repair:
+                LOGGER.info("%s shared monitors %s now show %s", "Repairing the picture:" if repair else "",
+                            sorted(away) or "all", self._label_of(protocol.read_id(peer)) if away else "this PC")
             self._carry_crossing(outcome)
             return bool(outcome["changed"])
 
