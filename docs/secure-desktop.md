@@ -56,8 +56,17 @@ elevation, nor run code as SYSTEM.
    already do: to drive a UAC prompt through the pipe it must already be elevated.
    - Consequence: secure desktop input works while Beamer runs as administrator (this PC's
      setting today). A non-elevated Beamer keeps today's behaviour on the secure desktop.
-   - Relaxing this (letting a non-elevated Beamer drive UAC) would let any program of the user
-     approve its own UAC prompt. Not done without a separate decision.
+   - Relaxing this for an administrator's account (letting its non-elevated Beamer drive UAC)
+     would let any program of that user approve its own UAC prompt, which is one Yes click there.
+   - **A standard account's own Beamer, unelevated.** A standard user's UAC prompt always asks for
+     an administrator's password, so a program pressing keys through the pipe approves nothing
+     without it. When an administrator runs the installer for a signed-in standard user, it writes
+     that user's SID as `StandardUser`; the helper then also takes that account's unelevated
+     Beamer (same session and path checks), but only while its token holds no Administrators group
+     in any state (an administrator's filtered token keeps it, deny-only). Running Beamer as that
+     user, rather than elevated with an administrator's credentials, keeps its settings, folders
+     and theme that user's own. What any program of that user then gains is typing on that
+     session's lock screen and UAC prompts as a keyboard would, never an approval or a password.
 3. **Pipe DACL**: SYSTEM and the session's interactive user only; remote clients rejected
    (`PIPE_REJECT_REMOTE_CLIENTS`).
 4. **Only input, SAS and ping** are accepted; each message is length-checked; the helper never
@@ -76,6 +85,31 @@ Install-Maintenance.ps1 gains a `-SecureDesktop` step:
 
 `-Remove` stops and deletes the service, the protected copy, the HKLM key, and the policy value if
 Beamer set it.
+
+## Before anyone signs in (the sign-in screen)
+
+Beamer is a per-user app, started when someone signs in, so after a restart or a sign-out nothing
+listened for the paired machines. As ShareMouse and Input Director do, the service now also starts
+Beamer itself in the right place: while nobody is signed in to the console session it runs
+`BeamerSecure.exe --logon-receiver` (logon_receiver.py) there as SYSTEM, on the Winlogon desktop,
+and ends it as soon as a user name appears on that session; that user's own Beamer then takes the
+port (its listener retries every 5 s). Nothing signs in for the user: the password is typed from
+the driving machine as at the PC's own keyboard, and no credentials are stored anywhere.
+
+- **Only machines already paired.** The installer copies the signed-in user's settings.json (or
+  the one beside `-ClientPath`) to `C:\Program Files\Beamer\logon\settings.json`, in a folder whose
+  ACL is SYSTEM and Administrators only, as it holds the pairing keys. The receiver links under
+  those pairings alone, as the same machine id, so the driving machines see the same PC. It never
+  pairs (the pairing port is not opened) and never writes the copy; run the installer again after
+  pairing.
+- **Keys and the pointer, nothing else.** Its `welcome` lists no optional capabilities: no
+  clipboard, files, settings, layout or monitors messages reach it.
+- **Firewall**: `Beamer Sign-in Screen (TCP-In)`, inbound TCP on that port, Private profile, for
+  BeamerSecure.exe only.
+- **What it adds to the attack surface**: the link's handshake and input parsing, now also as
+  SYSTEM. It is the same authenticated, encrypted link (ChaCha20-Poly1305, per-pairing keys) the
+  app uses, so an unpaired host gets no further than the handshake.
+- `-NoSignInScreen` leaves it out; `-Remove` takes away the folder and the firewall rule.
 
 ## Testing plan (needs the user, as administrator)
 

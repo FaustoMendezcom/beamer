@@ -6473,12 +6473,17 @@ def unlock_portable(parent=None) -> bool:
 def main() -> None:
     # The secure desktop service and its helper (docs/secure-desktop.md): the same exe, run by the
     # service control manager or by that service, never with the app's window or links.
-    if sys.platform == "win32" and len(sys.argv) > 1 and sys.argv[1] in ("--service", "--secure-helper"):
+    if sys.platform == "win32" and len(sys.argv) > 1 and sys.argv[1] in ("--service", "--secure-helper", "--logon-receiver"):
         import secure_service
 
         if sys.argv[1] == "--service":
             secure_service.run_service()
             return
+        if sys.argv[1] == "--logon-receiver":
+            import logon_receiver
+
+            secure_service.configure_logging("logon-receiver.log")
+            sys.exit(logon_receiver.main())
         import secure_helper
 
         secure_service.configure_logging("secure-helper.log")

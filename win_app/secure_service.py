@@ -3,7 +3,10 @@ LocalSystem, from C:\\Program Files\\Beamer, installed by Install-SecureDesktop.
 
 It keeps one secure desktop helper running as SYSTEM in the active console session: started when
 a session takes the console, restarted if it ends, and replaced when the console moves to another
-session (fast user switching, a remote session ending). It does nothing else."""
+session (fast user switching, a remote session ending). While nobody is signed in to that session
+(the sign-in screen after a start or a sign-out), and the installer copied this PC's pairings, it
+also runs Beamer's sign-in screen receiver there (logon_receiver), ended as soon as someone signs
+in and their own Beamer takes over."""
 
 import logging
 import os
@@ -13,8 +16,8 @@ from typing import Optional
 LOGGER = logging.getLogger(__name__)
 SERVICE_NAME = "BeamerSecureDesktop"
 DISPLAY_NAME = "Beamer secure desktop input"
-DESCRIPTION = ("Lets Beamer, running as administrator, type on the secure desktop: UAC prompts, the "
-               "lock screen and Ctrl+Alt+Del.")
+DESCRIPTION = ("Lets Beamer type on the secure desktop: UAC prompts, the lock screen, the sign-in "
+               "screen and Ctrl+Alt+Del.")
 CHECK_SECONDS = 2.0
 NO_SESSION = 0xFFFFFFFF
 # winnt.h; pywin32 does not name it. Needed to move the duplicated token into the user's session.
@@ -34,26 +37,31 @@ JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 class Supervisor:
     """Which helper should run, apart from the service plumbing so it can be tested: `session()`
     is the console session (NO_SESSION while none has it), `launch(session)` starts a helper and
-    returns its process, `alive(process)` and `stop(process)` look after it."""
+    returns its process, `alive(process)` and `stop(process)` look after it. `wanted(session)`
+    says whether it should run in that session at all (the sign-in screen receiver: only while
+    nobody is signed in there)."""
 
-    def __init__(self, session, launch, alive, stop):
+    def __init__(self, session, launch, alive, stop, wanted=None, name="Secure desktop helper"):
         self._session, self._launch, self._alive, self._stop = session, launch, alive, stop
+        self._wanted = wanted or (lambda session: True)
+        self._name = name
         self.process = None
         self.running_in: Optional[int] = None
 
     def check(self) -> None:
         session = self._session()
-        if self.process is not None and (session != self.running_in or not self._alive(self.process)):
-            LOGGER.info("Secure desktop helper for session %s ends", self.running_in)
+        wanted = session not in (None, NO_SESSION, 0) and self._wanted(session)
+        if self.process is not None and (session != self.running_in or not wanted or not self._alive(self.process)):
+            LOGGER.info("%s for session %s ends", self._name, self.running_in)
             self._stop(self.process)
             self.process, self.running_in = None, None
-        if self.process is None and session not in (None, NO_SESSION, 0):
+        if self.process is None and wanted:
             try:
                 self.process = self._launch(session)
                 self.running_in = session
-                LOGGER.info("Secure desktop helper started in session %s", session)
+                LOGGER.info("%s started in session %s", self._name, session)
             except Exception:
-                LOGGER.exception("Could not start the secure desktop helper in session %s", session)
+                LOGGER.exception("Could not start the %s in session %s", self._name.lower(), session)
 
     def shutdown(self) -> None:
         if self.process is not None:
@@ -69,8 +77,30 @@ def console_session() -> int:
     return int(ctypes.windll.kernel32.WTSGetActiveConsoleSessionId())
 
 
+def signed_in(session: int) -> bool:
+    """Whether someone is signed in to `session`. An error counts as yes, so the sign-in screen
+    receiver never holds the port from a user's own Beamer on a guess."""
+    import win32ts
+
+    try:
+        return bool(win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSUserName))
+    except Exception:
+        LOGGER.exception("Could not tell whether anyone is signed in to session %s", session)
+        return True
+
+
 def launch_helper(session: int):
-    """`<this exe> --secure-helper` as SYSTEM in `session`: this service's own token, its session
+    return launch_in(session, "--secure-helper", "winsta0\\default")
+
+
+def launch_logon_receiver(session: int):
+    # On the Winlogon desktop, which has the input at the sign-in screen, so its input and pointer
+    # reads go straight there.
+    return launch_in(session, "--logon-receiver", "winsta0\\winlogon")
+
+
+def launch_in(session: int, argument: str, desktop: str):
+    """`<this exe> <argument>` as SYSTEM in `session`: this service's own token, its session
     changed, on the user's window station so it can reach that session's desktops."""
     import win32con
     import win32process
@@ -83,14 +113,14 @@ def launch_helper(session: int):
                                            win32security.TokenPrimary, None)
     win32security.SetTokenInformation(token, win32security.TokenSessionId, session)
     startup = win32process.STARTUPINFO()
-    startup.lpDesktop = "winsta0\\default"
+    startup.lpDesktop = desktop
     exe = sys.executable
     # Without the service's own PyInstaller variables, so the helper unpacks itself rather than
     # running from the service's extraction folder, and outlives nothing of it.
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("_MEI", "_PYI", "PYINSTALLER"))}
     process, thread, _pid, _tid = win32process.CreateProcessAsUser(
-        token, exe, f'"{exe}" --secure-helper', None, None, False,
+        token, exe, f'"{exe}" {argument}', None, None, False,
         win32con.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT | win32process.CREATE_SUSPENDED,
         environment, None, startup)
     try:
@@ -226,11 +256,17 @@ def run_service() -> None:
             win32event.SetEvent(self.stop_event)
 
         def SvcDoRun(self):
+            import logon_receiver
+
             supervisor = Supervisor(console_session, launch_helper, process_alive, stop_process)
+            sign_in = Supervisor(console_session, launch_logon_receiver, process_alive, stop_process,
+                                 wanted=lambda session: logon_receiver.installed() and not signed_in(session),
+                                 name="Sign-in screen receiver")
             sas = sas_event()
             waits = [self.stop_event] + ([sas] if sas is not None else [])
             LOGGER.info("%s running", SERVICE_NAME)
             supervisor.check()
+            sign_in.check()
             while True:
                 woke = win32event.WaitForMultipleObjects(waits, False, int(CHECK_SECONDS * 1000))
                 if woke == win32event.WAIT_OBJECT_0:
@@ -239,6 +275,8 @@ def run_service() -> None:
                     send_sas()
                     continue
                 supervisor.check()
+                sign_in.check()
+            sign_in.shutdown()
             supervisor.shutdown()
             LOGGER.info("%s stopped", SERVICE_NAME)
 

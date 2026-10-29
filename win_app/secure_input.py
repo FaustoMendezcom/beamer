@@ -28,6 +28,9 @@ PIPE_PREFIX = r"\\.\pipe\BeamerSecureInput-"
 REGISTRY_KEY = r"SOFTWARE\Beamer\SecureDesktop"
 ALLOWED_CLIENT_VALUE = "AllowedClient"
 SERVICE_EXE_VALUE = "ServiceExe"
+# The SID of a standard account whose unelevated Beamer may use the helper (client_allowed).
+STANDARD_USER_VALUE = "StandardUser"
+ADMINISTRATORS_SID = "S-1-5-32-544"
 SYSTEM_SID = "S-1-5-18"
 # CreateFile: the server may identify this client but never act as it (no impersonation).
 SECURITY_SQOS_PRESENT = 0x00100000
@@ -87,18 +90,25 @@ def answer(status: int, text: str = "") -> bytes:
     return bytes([status, len(data)]) + data
 
 
-def client_allowed(info: dict, allowed_path: Optional[str], session: int) -> Tuple[bool, str]:
+def client_allowed(info: dict, allowed_path: Optional[str], session: int,
+                   standard_user: Optional[str] = None) -> Tuple[bool, str]:
     """Whether a pipe client may drive the secure desktop: in this session, the allowed Beamer.exe
-    (as the installer wrote it, under HKLM), and elevated. `info` holds the client's `session`,
-    `path` and `elevated`. (allowed, why not)."""
+    (as the installer wrote it, under HKLM), and elevated. Or, where the installer named a standard
+    account (`standard_user`, its SID), that account's own unelevated Beamer: a standard user's UAC
+    prompt always asks for an administrator's password, so nothing typed there approves itself.
+    An administrator's unelevated Beamer never counts, as its UAC prompts are one Yes click.
+    `info` holds the client's `session`, `path`, `elevated`, `sid` and `administrator`.
+    (allowed, why not)."""
     if info.get("session") != session:
         return False, "another session"
     path = (info.get("path") or "").lower()
     if not allowed_path or path != allowed_path.lower():
         return False, f"not the allowed Beamer ({info.get('path')})"
-    if info.get("elevated") is not True:
-        return False, "Beamer is not running as administrator"
-    return True, ""
+    if info.get("elevated") is True:
+        return True, ""
+    if standard_user and info.get("sid") == standard_user and info.get("administrator") is False:
+        return True, ""
+    return False, "Beamer is not running as administrator"
 
 
 def server_trusted(info: dict, expected_path: Optional[str], session: int) -> Tuple[bool, str]:

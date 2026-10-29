@@ -55,6 +55,17 @@ class WhoMayUseItTests(unittest.TestCase):
     def test_a_normal_beamer_is_told_why(self):
         self.assertIn("administrator", secure_input.client_allowed(self.info(elevated=False), ALLOWED, 1)[1])
 
+    def test_the_named_standard_accounts_own_beamer_unelevated(self):
+        worker = "S-1-5-21-1-2-3-1001"
+        normal = self.info(elevated=False, sid=worker, administrator=False)
+        self.assertEqual(secure_input.client_allowed(normal, ALLOWED, 1, worker), (True, ""))
+        for info, named in ((normal, None), (normal, "S-1-5-21-1-2-3-1002"),
+                            (self.info(elevated=False, sid=worker, administrator=True), worker),
+                            (self.info(elevated=False, sid=worker), worker),
+                            (dict(normal, path=r"C:\evil\Beamer.exe"), worker), (dict(normal, session=2), worker)):
+            with self.subTest(info=info, named=named):
+                self.assertFalse(secure_input.client_allowed(info, ALLOWED, 1, named)[0])
+
 
 class HelperTests(unittest.TestCase):
     def setUp(self):

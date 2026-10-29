@@ -132,20 +132,34 @@ def _client_info(pipe) -> dict:
         ctypes.windll.kernel32.QueryFullProcessImageNameW(int(process), 0, path, ctypes.byref(size))
         token = win32security.OpenProcessToken(process, TOKEN_QUERY)
         elevated = bool(win32security.GetTokenInformation(token, TOKEN_ELEVATION))
+        sid = win32security.ConvertSidToStringSid(win32security.GetTokenInformation(token, win32security.TokenUser)[0])
+        # In any state: an administrator's unelevated token keeps the group, for deny only.
+        groups = win32security.GetTokenInformation(token, win32security.TokenGroups)
+        administrator = any(win32security.ConvertSidToStringSid(group) == secure_input.ADMINISTRATORS_SID
+                            for group, _attributes in groups)
     finally:
         win32api.CloseHandle(process)
-    return {"pid": pid, "session": int(session.value), "path": path.value, "elevated": elevated}
+    return {"pid": pid, "session": int(session.value), "path": path.value, "elevated": elevated,
+            "sid": sid, "administrator": administrator}
 
 
-def allowed_client() -> Optional[str]:
+def _installed_value(name: str) -> Optional[str]:
     import winreg
 
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, secure_input.REGISTRY_KEY) as key:
-            value, _kind = winreg.QueryValueEx(key, secure_input.ALLOWED_CLIENT_VALUE)
-            return str(value)
+            value, _kind = winreg.QueryValueEx(key, name)
+            return str(value) or None
     except OSError:
         return None
+
+
+def allowed_client() -> Optional[str]:
+    return _installed_value(secure_input.ALLOWED_CLIENT_VALUE)
+
+
+def standard_user() -> Optional[str]:
+    return _installed_value(secure_input.STANDARD_USER_VALUE)
 
 
 class PipeTaken(OSError):
@@ -189,7 +203,7 @@ def serve_forever(session: Optional[int] = None) -> None:
             win32pipe.ConnectNamedPipe(pipe, None)
             spare = instance(first=False)
             info = _client_info(pipe)
-            allowed, why = secure_input.client_allowed(info, allowed_client(), session)
+            allowed, why = secure_input.client_allowed(info, allowed_client(), session, standard_user())
             if not allowed:
                 # Answered at once, without waiting on anything it sends: a client that connects and
                 # stays silent must not hold the helper from Beamer.
