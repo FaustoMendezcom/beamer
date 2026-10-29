@@ -36,6 +36,7 @@ SYSTEM_SID = "S-1-5-18"
 SECURITY_SQOS_PRESENT = 0x00100000
 SECURITY_IDENTIFICATION = 0x00010000
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+ERROR_ACCESS_DENIED = 5
 FILE_WRITE_DATA = 0x0002
 TOKEN_QUERY = 0x0008
 CONNECT_TIMEOUT_MS = 200
@@ -115,7 +116,17 @@ def server_trusted(info: dict, expected_path: Optional[str], session: int) -> Tu
     """Whether the process serving the pipe is the installed helper: SYSTEM, the service's own exe
     under Program Files (as the installer wrote it, under HKLM), in this session. Checked before a
     single byte is written, as any program could create a pipe of that name first and read the
-    passwords typed on the secure desktop. (trusted, why not)."""
+    passwords typed on the secure desktop. (trusted, why not).
+
+    A standard account's Beamer may not open a SYSTEM process at all (`opened` False): then the
+    pipe's own owner stands for it, which must be SYSTEM. No program of a standard or unelevated
+    account can make an object SYSTEM owns, only SYSTEM itself, whose every process is trusted."""
+    if info.get("opened") is False:
+        if info.get("owner") != SYSTEM_SID:
+            return False, f"the pipe is owned by {info.get('owner') or 'an unknown account'}, not SYSTEM"
+        if info.get("session") != session:
+            return False, "the pipe is served from another session"
+        return True, ""
     if info.get("sid") != SYSTEM_SID:
         return False, f"the pipe is served by {info.get('sid') or 'an unknown account'}, not SYSTEM"
     path = (info.get("path") or "").lower()
@@ -262,11 +273,24 @@ def server_info(handle) -> dict:
     import win32pipe
     import win32security
 
+    import pywintypes
+
     pid = win32pipe.GetNamedPipeServerProcessId(handle)
     session = ctypes.c_ulong()
-    ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(session))
-    info = {"pid": pid, "session": int(session.value), "path": None, "sid": None}
-    process = win32api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not ctypes.windll.kernel32.GetNamedPipeServerSessionId(int(handle), ctypes.byref(session)):
+        raise OSError("the pipe's session could not be read")
+    descriptor = win32security.GetSecurityInfo(int(handle), win32security.SE_KERNEL_OBJECT,
+                                               win32security.OWNER_SECURITY_INFORMATION)
+    owner = win32security.ConvertSidToStringSid(descriptor.GetSecurityDescriptorOwner())
+    info = {"pid": pid, "session": int(session.value), "path": None, "sid": None, "owner": owner, "opened": True}
+    try:
+        process = win32api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    except pywintypes.error as exc:
+        if exc.winerror != ERROR_ACCESS_DENIED:
+            raise
+        # A standard account may not open a SYSTEM process: the pipe's owner tells instead.
+        info["opened"] = False
+        return info
     try:
         size = ctypes.c_ulong(1024)
         path = ctypes.create_unicode_buffer(1024)

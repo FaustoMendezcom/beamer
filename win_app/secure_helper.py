@@ -24,7 +24,8 @@ REFUSED_GRACE_SECONDS = 0.2
 # SYSTEM full; interactive users only read and write data (FILE_GENERIC_READ | FILE_WRITE_DATA),
 # never FILE_CREATE_PIPE_INSTANCE, which GENERIC_WRITE would include and which would let any
 # program add its own instance of this pipe. Who may actually use it is checked per client.
-PIPE_SDDL = "D:P(A;;GA;;;SY)(A;;0x0012008B;;;IU)"
+# Owned by SYSTEM, which a standard account's Beamer checks where it may not open this process.
+PIPE_SDDL = "O:SYD:P(A;;GA;;;SY)(A;;0x0012008B;;;IU)"
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 TOKEN_QUERY = 0x0008
 TOKEN_ELEVATION = 20

@@ -145,6 +145,15 @@ class ServerCheckTests(unittest.TestCase):
                 self.assertFalse(secure_input.server_trusted(info, SERVICE, 1)[0])
         self.assertFalse(secure_input.server_trusted(self.info(), None, 1)[0])
 
+    def test_a_server_it_may_not_open_counts_only_when_system_owns_the_pipe(self):
+        closed = {"opened": False, "path": None, "sid": None, "session": 1}
+        self.assertEqual(secure_input.server_trusted(dict(closed, owner=secure_input.SYSTEM_SID), SERVICE, 1),
+                         (True, ""))
+        for info in (dict(closed, owner="S-1-5-21-1-2-3-1001"), dict(closed, owner="S-1-5-32-544"),
+                     dict(closed, owner=None), dict(closed, owner=secure_input.SYSTEM_SID, session=3)):
+            with self.subTest(info=info):
+                self.assertFalse(secure_input.server_trusted(info, SERVICE, 1)[0])
+
     def test_not_installed_no_pipe_is_ever_opened(self):
         opened = []
         client = secure_input.Client(1, opener=lambda *args: opened.append(args), clock=lambda: 0.0,
