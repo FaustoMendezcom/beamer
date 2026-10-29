@@ -256,6 +256,60 @@ class PageOffZones(unittest.TestCase):
         self.assertIn("notch", ways.ways(compiled, A)["methods"])
 
 
+class InnerDisplayEdges(unittest.TestCase):
+    # Three displays in a 2x2 grid with the top-left quarter empty, offset 4 px as Windows leaves a
+    # dragged monitor: the top-right display's left edge falls between map units.
+    GRID = {"0": {"x": -4, "y": 1440, "w": 3440, "h": 1440},
+            "1": {"x": -3444, "y": 1440, "w": 3440, "h": 1440},
+            "2": {"x": 0, "y": 0, "w": 3440, "h": 1440}}
+
+    def layout(self, x, y):
+        return {HERE: {"x": 2, "y": -73, "w": 233, "h": 146, "displays": self.GRID},
+                A: {"x": x, "y": y, "w": 118, "h": 73,
+                    "displays": {"0": {"x": 0, "y": 0, "w": 3440, "h": 1440}}}}
+
+    def test_a_peer_in_the_empty_quarter_crosses_to_each_display_it_sits_against(self):
+        for x in (0, 1):
+            with self.subTest(x=x):
+                held = settings(peer(A, "Ay"))
+                out = ways.compile_layout(held, self.layout(x, -73), capable={HERE, A}, now=100)
+                self.assertTrue(out["accepted"])
+                found = sorted((z["display"], z["side"], z["target_display"], z["target_side"])
+                               for z in out["settings"]["zones"])
+                self.assertEqual(found, [("1", "top", "0", "bottom"), ("2", "left", "0", "right")])
+
+    def test_the_peer_sees_the_same_two_contacts_from_its_side(self):
+        layout = self.layout(0, -73)
+        self.assertEqual(sorted((contact[0], target["display"])
+                                for _screen, contact, target in ways.display_contacts(layout[A], layout[HERE])),
+                         [("bottom", "1"), ("right", "2")])
+
+    def test_dropping_near_the_empty_quarter_snaps_into_it(self):
+        layout = self.layout(5, -70)
+        others = {HERE: layout[HERE]}
+        snap = ways.snap_position(layout[A], HERE, others, radius=12)
+        self.assertTrue(ways.within_snap_radius(layout[A], snap, HERE, others, 12))
+        placed = {**layout[A], **snap}
+        self.assertEqual(sorted((contact[0], target["display"])
+                                for _screen, contact, target in ways.display_contacts(placed, layout[HERE])),
+                         [("bottom", "1"), ("right", "2")])
+
+    def test_snapping_never_lands_on_one_of_this_machines_displays(self):
+        layout = self.layout(60, 0)
+        snap = ways.snap_position(layout[A], HERE, {HERE: layout[HERE]}, radius=12)
+        for frame in ways._display_frames(layout[HERE]):
+            self.assertFalse(ways._overlaps({**layout[A], **snap}, frame))
+
+    def test_whole_unit_tiles_keep_exact_contact_and_overlap(self):
+        own = {"x": 0, "y": 0, "w": 160, "h": 100}
+        self.assertEqual(ways._rect_contact(own, {"x": 160, "y": 0, "w": 160, "h": 100}), ("right", 0, 100))
+        self.assertIsNone(ways._rect_contact(own, {"x": 161, "y": 0, "w": 160, "h": 100}))
+        self.assertEqual(ways._rect_contact(own, {"x": 160, "y": 100, "w": 160, "h": 100}),
+                         ("corner", "bottom_right", ""))
+        self.assertTrue(ways._overlaps(own, {"x": 159, "y": 0, "w": 160, "h": 100}))
+        self.assertFalse(ways._overlaps(own, {"x": 160, "y": 0, "w": 160, "h": 100}))
+
+
 class WrapAroundWays(unittest.TestCase):
     def test_wrap_edge_uses_free_thirds_and_records_the_map_entry(self):
         held = settings(peer(A, "Ay", side="right", ways={

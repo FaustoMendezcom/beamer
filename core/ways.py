@@ -56,6 +56,11 @@ DIAGRAM_OTHER = (112.0, 63.0)
 DIAGRAM_GAP = 10.0
 DIAGRAM_SPLIT_GAP = 6.0
 DIAGRAM_MARGIN = 12.0
+# Display frames are scaled into whole-unit tiles, so an inner display edge (one display above another
+# beside a peer) lands between map units and a tile can never sit exactly on it. Edges this close count
+# as touching; under one unit, so contacts and overlaps between whole-unit tiles are unchanged. Corners
+# stay exact: a near-miss vertex is a crossing nobody drew.
+CONTACT_SLACK = 0.9
 # Machine tiles use map units; manual resizing clamps their longer side to this range.
 RESIZE_MIN = 40
 RESIZE_MAX = 480
@@ -263,10 +268,11 @@ def _rect_contact(a, b):
     ax, ay, aw, ah = (a[k] for k in ("x", "y", "w", "h")); bx, by, bw, bh = (b[k] for k in ("x", "y", "w", "h"))
     ar, ab, br, bb = ax+aw, ay+ah, bx+bw, by+bh
     along_y, along_x = min(ab, bb)-max(ay, by), min(ar, br)-max(ax, bx)
-    if br == ax and along_y > 0: return "left", max(ay, by), min(ab, bb)
-    if bx == ar and along_y > 0: return "right", max(ay, by), min(ab, bb)
-    if bb == ay and along_x > 0: return "top", max(ax, bx), min(ar, br)
-    if by == ab and along_x > 0: return "bottom", max(ax, bx), min(ar, br)
+    meets = lambda one, two: abs(one - two) < CONTACT_SLACK
+    if meets(br, ax) and along_y > CONTACT_SLACK: return "left", max(ay, by), min(ab, bb)
+    if meets(bx, ar) and along_y > CONTACT_SLACK: return "right", max(ay, by), min(ab, bb)
+    if meets(bb, ay) and along_x > CONTACT_SLACK: return "top", max(ax, bx), min(ar, br)
+    if meets(by, ab) and along_x > CONTACT_SLACK: return "bottom", max(ax, bx), min(ar, br)
     corners = {(ax, ay): "top_left", (ar, ay): "top_right", (ax, ab): "bottom_left", (ar, ab): "bottom_right"}
     for point, corner in corners.items():
         if point in ((bx, by), (bx+bw, by), (bx, by+bh), (bx+bw, by+bh)):
@@ -302,7 +308,9 @@ def side_contacts(own, peer):
 
 
 def _overlaps(a, b):
-    return a["x"] < b["x"]+b["w"] and b["x"] < a["x"]+a["w"] and a["y"] < b["y"]+b["h"] and b["y"] < a["y"]+a["h"]
+    reach = CONTACT_SLACK
+    return (a["x"] < b["x"]+b["w"]-reach and b["x"] < a["x"]+a["w"]-reach
+            and a["y"] < b["y"]+b["h"]-reach and b["y"] < a["y"]+a["h"]-reach)
 
 
 def _display_frames(tile):
@@ -390,8 +398,21 @@ def snap_position(tile, own_id, layout, radius=12):
                        ({"x": round(ox+ow), "y": round(oy-h), "w": w, "h": h}, False),
                        ({"x": round(ox-w), "y": round(oy+oh), "w": w, "h": h}, False),
                        ({"x": round(ox+ow), "y": round(oy+oh), "w": w, "h": h}, False)))
+    # Several displays not filling their tile leave room inside it (a 2x2 grid with one quarter
+    # empty): flush against each display's own sides too, so a tile drops into that room touching
+    # the displays around it.
+    frames = _display_frames(own) if len(own.get("displays") or {}) > 1 else []
+    for frame in frames:
+        fx, fy, fw, fh = (frame[k] for k in ("x", "y", "w", "h"))
+        for cy in (fy, fy+fh-h):
+            add(fx-w, cy)
+            add(fx+fw, cy)
+        for cx in (fx, fx+fw-w):
+            add(cx, fy-h)
+            add(cx, fy+fh)
     free = [(candidate, centred) for candidate, centred in candidates
-            if not any(k != own_id and _overlaps(candidate, other) for k, other in layout.items())]
+            if not any(k != own_id and _overlaps(candidate, other) for k, other in layout.items())
+            and not any(_overlaps(candidate, frame) for frame in frames)]
     near = [(candidate, centred) for candidate, centred in free
             if math.hypot(candidate["x"]-x, candidate["y"]-y) <= radius * (1.5 if centred else 1)]
     return min(near or free,
