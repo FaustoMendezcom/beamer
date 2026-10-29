@@ -2125,8 +2125,15 @@ class WindowsApplication(QWidget):
                     self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host,
                                                               host_since=self.shared_monitors.host_since))
         away = self.shared_monitors.away()
+        shared = self.shared_monitors.shared_keys()
         if away != self._monitors_away:
             self._apply_monitors_away(away)
+        elif shared != getattr(self, "_monitors_shared", set()) and self._config is not None:
+            # Learnt only once the peer's announcement arrives, after start: until then every
+            # display was put in the picture, a laptop's own included, where only the shared ones go.
+            self._refresh_own_displays()
+            self._reconcile_displays()
+        self._monitors_shared = shared
         self._reflect_shared_monitors()
 
     def _apply_monitors_away(self, away: dict) -> None:

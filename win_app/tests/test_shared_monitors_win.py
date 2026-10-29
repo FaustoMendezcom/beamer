@@ -229,6 +229,33 @@ class GuestPictureTests(unittest.TestCase):
     def test_not_showing_them_reports_its_own_screen(self):
         self.assertEqual(self.displays({"0": "host", "1": "host"}), {"2": self.LAPTOP})
 
+    def test_learning_which_are_shared_reports_them_again_with_nothing_away(self):
+        # A fresh start shares nothing until the peer's announcement arrives; that alone, with
+        # nothing switched away, must put the displays in the picture again.
+        import types
+
+        import kvm_bridge_win
+
+        shared = [set()]
+        calls = []
+        app = types.SimpleNamespace(
+            shared_monitors=types.SimpleNamespace(
+                announcement=lambda: [], away=lambda: {}, shared_keys=lambda: set(shared[0]),
+                host=False, host_since=0),
+            _closing=False, _monitors_announced=[], _monitors_away={}, _config=object(),
+            _peer_caps=lambda: {}, _reflect_shared_monitors=lambda: None,
+            _apply_monitors_away=lambda away: calls.append("away"),
+            _refresh_own_displays=lambda: calls.append("refresh"),
+            _reconcile_displays=lambda: calls.append("reconcile"))
+        changed = kvm_bridge_win.WindowsApplication._on_shared_monitors_changed
+        changed(app)
+        self.assertEqual(calls, [])
+        shared[0] = {"0", "1"}
+        changed(app)
+        self.assertEqual(calls, ["refresh", "reconcile"])
+        changed(app)
+        self.assertEqual(calls, ["refresh", "reconcile"])
+
 
 class EdidTests(unittest.TestCase):
     def edid(self, serial_text=b"24142B000972", number=0):
