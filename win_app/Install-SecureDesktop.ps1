@@ -159,6 +159,11 @@ if (-not $NoSignInScreen) {
         New-NetFirewallRule -DisplayName $FirewallRule -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow `
             -Profile Private -Program $ServiceExe | Out-Null
         Write-Host "The sign-in screen takes input from the $(@($settings.peers).Count) machine(s) paired in $SettingsPath."
+        # The rule is for private networks only: on a public one the sign-in screen is unreachable.
+        foreach ($network in @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object NetworkCategory -eq 'Public')) {
+            Write-Warning ("$($network.InterfaceAlias) is a public network, where the sign-in screen cannot be reached. " +
+                "If it is your own network: Set-NetConnectionProfile -InterfaceAlias '$($network.InterfaceAlias)' -NetworkCategory Private")
+        }
     } else {
         Write-Warning "No settings at $SettingsPath; the sign-in screen receiver is left out until this runs again after pairing."
     }
