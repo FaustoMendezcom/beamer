@@ -488,6 +488,7 @@ Capabilities say what a machine does with a message it receives:
 | `displays` | with `layout`, it sends and receives each machine's logical display rectangles and display-targeted edges |
 | `ping_rtt` | it sends and answers response-time probes on `ping` in both directions |
 | `monitors` | it sends and acts on `monitors`, for monitors wired to two machines (section 10) |
+| `files` | it offers copied files with `files` and serves and makes data connections (section 10) |
 
 A sender does not send a message its peer's capabilities do not cover. A receiver that gets one
 anyway drops it, and still acknowledges it when it carries a `seq`.
@@ -1380,6 +1381,52 @@ over the place they leave, with a new `layout_set_at`. Every machine's zones the
 machine the monitors show, with no change to how zones are compiled. When they show it again it
 puts its tile back and parks the peer's below the others, touching nothing. A machine that would
 keep no display moves nothing. These are control messages, without `seq` or acknowledgement.
+
+**`files`** offers files copied on the sender, by name and size only. Both ends advertise the
+optional `files` capability; older peers, and the Mac, receive none. Wire version 6 is unchanged.
+
+```json
+{"type":"files","data":{"action":"offer","id":"<b64 16 bytes>","count":3,"total":1048576,"label":"Photos","mode":"paste"}}
+{"type":"files","data":{"action":"cancel","id":"<b64 16 bytes>"}}
+```
+
+`mode` says how the recipient takes the offer; absent, it is `paste`:
+
+- `paste`: sent to every linked peer that takes `files` when files are copied, and withdrawn with
+  `cancel` when anything else is;
+- `drop`: files dragged through an edge, sent to that edge's machine alone, which puts them in the
+  folder under its pointer when the button is let go there (an Explorer window or the desktop),
+  else, or after 20 seconds, in its received folder (Downloads/Beamer);
+- `send`: Explorer's Send to, fetched at once into the received folder, which then opens.
+
+A `drop` or `send` set goes to a folder, not the clipboard, so it may be far larger: up to 1 TiB
+and the room in that folder. `id` is random, never all zeros; `count` 1 to 100000;
+`total` the bytes in all; `label` at most 120 characters, for the user. A recipient keeps only
+the newest offer, and fetches it when input next arrives there, if that is within ten minutes of
+the offer and `total` is at most 2 GiB. The fetched files go on its clipboard for two minutes, and
+leave it then if it still holds them.
+
+The files travel on a **data connection**, never on a link, so input never waits behind them. The
+recipient connects to the sender's port and opens it as a link would (section 2), but its first
+frame is `files_fetch` in place of `hello`:
+
+```json
+{"type":"files_fetch","data":{"id":"<the offer's id>","from":"<the recipient's own id>"}}
+```
+
+The sender serves it only for the pairing the preamble's key id names, whose id `from` must be,
+and never makes it a link. It answers, each frame sealed as on a link:
+
+- `{"type":"files_manifest","data":{"items":[{"path":"Photos/a.jpg","size":5,"mtime":1700000000,"dir":false}, ...]}}`,
+  folders before what is in them, or `{"type":"files_refused","data":{"reason":"..."}}` and closes;
+- for each file in order, data frames `00` followed by up to 1 MiB of it, then `01`;
+- `02` once every file has gone.
+
+A `path` is relative, its parts joined by `/`; the recipient refuses the whole transfer for any
+part that is empty, `.` or `..`, holds `< > : " / \ | ? *` or a control character, ends in a dot or
+a space, or is a device name (`CON`, `NUL`, `COM1`...), and for any path that would resolve outside
+the folder it writes into. A file's data must add up to its `size`. The recipient marks each file
+as from another computer (Mark of the Web) where the file system allows.
 
 **`text`** is a string the receiver types as it stands, for a phone's keyboard, where naming each
 key would lose accents and emoji. The receiver advertises `text` only if it can type any Unicode

@@ -58,6 +58,7 @@ NOT_SHOWN = {
     # XML paths and scheduled-task run levels are Windows data, not translated prose.
     "find", "findall", "findtext", "SubElement", "task_xml",
     "_FlagAsMethod",  # COM method identifiers must retain their registered spelling.
+    "RegisterClipboardFormat",  # Clipboard format names are Windows identifiers ("Preferred DropEffect").
 }
 
 

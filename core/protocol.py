@@ -111,6 +111,8 @@ MSG_ARRANGEMENT = "arrangement"
 MSG_SETTINGS = "settings"
 MSG_IDENTIFY_SCREENS = "identify_screens"
 MSG_MONITORS = "monitors"
+MSG_FILES = "files"
+MSG_FILES_FETCH = "files_fetch"
 
 # System trackpad gestures. The Mac classifies one at the end of the movement and sends a
 # single message; the name is the finger motion, not its meaning, so the receiver decides
@@ -397,6 +399,60 @@ def read_identify_screens(message):
             or len(set(displays.values())) != len(displays)):
         return None
     return dict(displays)
+
+
+FILES_ACTIONS = ("offer", "cancel")
+# How the recipient takes an offer: onto its clipboard when input arrives (`paste`), into the
+# folder under its pointer where the dragged files are let go (`drop`), or straight into its
+# downloads (`send`).
+FILES_MODES = ("paste", "drop", "send")
+FILES_MAX_COUNT = 100000
+FILES_LABEL_CHARS = 120
+
+
+def files_msg(action: str, offer: bytes, count: int = 0, total: int = 0, label: str = "", mode: str = "paste") -> dict:
+    """Files copied on the sender (WIRE.md section 10, files): `offer` names a set by a random
+    16-byte id with its file count, total bytes and a label for the user; `cancel` withdraws one.
+    The files themselves travel on a data connection the recipient opens (`files_fetch`)."""
+    data = {"action": action, "id": id_text(offer)}
+    if action == "offer":
+        data.update(count=int(count), total=int(total), label=str(label)[:FILES_LABEL_CHARS], mode=mode)
+    return {"type": MSG_FILES, "data": data}
+
+
+def read_files(message):
+    """(action, id bytes, count, total, label, mode), or None when malformed. An offer without a
+    `mode` is a `paste`."""
+    parsed = read_message(message)
+    if parsed is None or parsed[0] != MSG_FILES:
+        return None
+    data = parsed[1]
+    offer = read_id(data.get("id"))
+    if data.get("action") not in FILES_ACTIONS or offer is None:
+        return None
+    if data["action"] == "cancel":
+        return "cancel", offer, 0, 0, "", ""
+    label, mode = data.get("label"), data.get("mode", "paste")
+    if (not _int(data.get("count"), 1, FILES_MAX_COUNT) or not _int(data.get("total"), 0, MAX_SAFE_INTEGER)
+            or not isinstance(label, str) or len(label) > FILES_LABEL_CHARS or mode not in FILES_MODES):
+        return None
+    return "offer", offer, data["count"], data["total"], label, mode
+
+
+def files_fetch_msg(offer: bytes, own_id: bytes) -> dict:
+    """The first frame of a data connection, in place of `hello`: fetch offer `offer` for `own_id`."""
+    return {"type": MSG_FILES_FETCH, "data": {"id": id_text(offer), "from": id_text(own_id)}}
+
+
+def read_files_fetch(message):
+    """(offer id, requester id) from a `files_fetch`, or None."""
+    parsed = read_message(message)
+    if parsed is None or parsed[0] != MSG_FILES_FETCH:
+        return None
+    offer, requester = read_id(parsed[1].get("id")), read_id(parsed[1].get("from"))
+    if offer is None or requester is None:
+        return None
+    return offer, requester
 
 
 MONITORS_ACTIONS = ("announce", "give", "request")

@@ -345,6 +345,10 @@ class StatusBridge(QObject):
     monitors_changed = Signal()
     monitors_message = Signal(str, object)
     switch_computer = Signal()
+    # Files: a peer's dragged set to land here; the owner let a button go here; files to send.
+    files_drop = Signal(object)
+    files_release = Signal()
+    files_send = Signal(object)
     shook_home = Signal(object)
     alert = Signal(str, str)
     # (version, url) when a newer Beamer is out, else None.
@@ -370,14 +374,15 @@ def _instance_server_name() -> str:
 
 
 def send_instance_activation(name: Optional[str] = None, activation_token: Optional[str] = None,
-                             timeout_ms: int = 2000) -> bool:
+                             timeout_ms: int = 2000, send: Optional[list] = None) -> bool:
     name = name or _instance_server_name()
     deadline = time.monotonic() + timeout_ms / 1000
     while True:
         socket = QLocalSocket()
         socket.connectToServer(name)
         if socket.waitForConnected(100):
-            payload = json.dumps({"activation_token": activation_token or ""}).encode("utf-8") + b"\n"
+            request = {"send": list(send)} if send is not None else {"activation_token": activation_token or ""}
+            payload = json.dumps(request).encode("utf-8") + b"\n"
             socket.write(payload)
             return socket.waitForBytesWritten(max(1, int((deadline - time.monotonic()) * 1000)))
         socket.abort()
@@ -387,10 +392,11 @@ def send_instance_activation(name: Optional[str] = None, activation_token: Optio
 
 
 class InstanceSignal(QObject):
-    def __init__(self, activate, name: Optional[str] = None, parent=None):
+    def __init__(self, activate, name: Optional[str] = None, parent=None, send=None):
         super().__init__(parent)
         self.name = name or _instance_server_name()
         self.activate = activate
+        self.send = send
         QLocalServer.removeServer(self.name)
         self.server = QLocalServer(self)
         self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
@@ -409,7 +415,11 @@ class InstanceSignal(QObject):
             request = json.loads(bytes(connection.readLine()).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             request = {}
-        self.activate(request.get("activation_token") or None)
+        paths = request.get("send") if isinstance(request, dict) else None
+        if isinstance(paths, list) and self.send is not None:
+            self.send([path for path in paths if isinstance(path, str)])
+        else:
+            self.activate(request.get("activation_token") or None)
         connection.disconnectFromServer()
 
     def close(self) -> None:
@@ -653,6 +663,7 @@ class WindowsApplication(QWidget):
             settings_callback=lambda peer, data: self.bridge.settings.emit(protocol.id_text(peer), data),
             identify_callback=self._receive_identify_screens,
             monitors_callback=lambda peer, read: self.bridge.monitors_message.emit(protocol.id_text(peer), read),
+            files_callback=self._on_files_message,
             paired_callback=self._store_paired,
             link_callback=lambda peer, up: self.bridge.peers_changed.emit(),
             announce=self._announce,
@@ -700,6 +711,8 @@ class WindowsApplication(QWidget):
         self.sender.settings_callback = lambda peer, data: self.bridge.settings.emit(protocol.id_text(peer), data)
         self.sender.identify_callback = self._receive_identify_screens
         self.sender.monitors_callback = lambda peer, read: self.bridge.monitors_message.emit(protocol.id_text(peer), read)
+        self.sender.files_callback = self._on_files_message
+        self.file_share = None
         self.sender.arrangement_callback = lambda peer, read: self.bridge.arrangement.emit(
             protocol.id_text(peer), read["edge"], read["set_at"], protocol.id_text(read["by"]), read.get("way_back"),
             protocol.id_text(read["way_back_by"]) if read.get("way_back_by") else None
@@ -1936,6 +1949,89 @@ class WindowsApplication(QWidget):
             if "identify_screens" in caps:
                 self._send_to(peer, protocol.identify_screens_msg(display_numbers(tiles.get(protocol.id_text(peer)))))
 
+    # -- files (WIRE.md section 10, files) -------------------------------------------------
+
+    def _start_file_share(self) -> None:
+        """Files copied here offered to the PCs that take them, and theirs fetched on arrival."""
+        if OWN_PLATFORM != "windows" or portable_runtime.enabled() or self._config is None:
+            return
+        import clipboard_files_win
+        import file_share_win
+
+        staging = self.config_path.parent / "incoming"
+        try:
+            staging.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            LOGGER.exception("Files cannot cross: no staging folder at %s", staging)
+            return
+        import drop_landing_win
+        import shell_folder_win
+
+        self.file_share = file_share_win.FileShare(
+            clipboard_files_win, own_id=protocol.read_id(self._config.machine_id), staging=str(staging),
+            send=self._send_to, targets=self._file_targets, peer=self._file_peer,
+            notify=lambda text: self.bridge.alert.emit(tr("Beamer"), text),
+            received=shell_folder_win.received_folder, dropped=self.bridge.files_drop.emit,
+            opened=lambda folder: os.startfile(folder))
+        self.server.files_server = self.file_share.serve
+        self.file_share.start()
+        # Dragged files land where the button is let go here, elevated or not.
+        self.drop_landing = drop_landing_win.DropLanding(
+            desktop_win.cursor_position, shell_folder_win.folder_at, shell_folder_win.received_folder,
+            lambda incoming, folder: self.file_share._spawn(self.file_share.deliver, incoming, folder), parent=self)
+        self.bridge.files_drop.connect(self.drop_landing.arm)
+        self.bridge.files_release.connect(self.drop_landing.released)
+        self.bridge.files_send.connect(self.send_files)
+        self.server.button_watch = lambda button, down: (
+            self.bridge.files_release.emit() if button == "left" and not down and self.drop_landing.armed else None)
+        if getattr(sys, "frozen", False):
+            shell_folder_win.install_send_to(sys.executable)
+        # Dragging out needs Explorer to drop on Beamer, which Windows refuses an elevated app.
+        import admin_mode
+
+        if admin_mode._is_elevated():
+            LOGGER.info("Running as administrator: dragging files out to another PC is off; copy and paste, "
+                        "Send to and dropping files here still work")
+            return
+        import drag_catch_win
+
+        self.drag_catcher = drag_catch_win.DragCatcher(
+            self._zones, desktop_win.display_map, desktop_win.cursor_position,
+            lambda: {protocol.id_text(peer) for peer in self._file_targets()},
+            lambda peer, paths: self.file_share.offer_paths(paths, protocol.read_id(peer), "drop"), parent=self)
+        self.drag_catcher.start()
+
+    def send_files(self, paths) -> None:
+        """Explorer's Send to → Beamer: to the PC sharing monitors with this one, else the first
+        linked PC that takes files."""
+        if getattr(self, "file_share", None) is None or not paths:
+            return
+        targets = self._file_targets()
+        shared = set(self.shared_monitors.shared()) if self.shared_monitors is not None else set()
+        peer = next((ident for ident in targets if protocol.id_text(ident) in shared), None) or (
+            targets[0] if targets else None)
+        if peer is None:
+            self._on_alert(tr("Beamer"), tr("No PC that takes files is connected."))
+            return
+        label = self.file_share.offer_paths([str(path) for path in paths], peer, "send")
+        if label:
+            self._on_alert(tr("Beamer"), tr("Sending {label} to {name}.").format(label=label, name=self._label_of(peer)))
+
+    def _file_targets(self) -> list:
+        return [peer for peer, caps in self._peer_caps().items() if "files" in caps]
+
+    def _file_peer(self, peer: bytes):
+        """(host, port, token, name) to fetch from `peer` at, from its pairing."""
+        entry = next((item for item in self.book.peers() if protocol.read_id(item.get("id")) == peer), None)
+        if entry is None or not entry.get("host") or not entry.get("token"):
+            return None
+        return entry["host"], int(entry.get("port") or protocol.DEFAULT_PORT), entry["token"], self._label_of(peer)
+
+    def _on_files_message(self, peer: bytes, read) -> None:
+        """A peer's `files`, on a link's thread: FileShare keeps its own lock."""
+        if getattr(self, "file_share", None) is not None:
+            self.file_share.on_message(peer, read)
+
     # -- shared monitors (WIRE.md section 8) ------------------------------------------------
 
     def _start_shared_monitors(self) -> None:
@@ -2256,9 +2352,9 @@ class WindowsApplication(QWidget):
             "platform": OWN_PLATFORM,
             "app": VERSION[:32] if VERSION.isascii() and VERSION.isprintable() else "dev",
             # A swipe has no shortcut every Linux desktop shares, so Linux does not offer gestures.
-            "caps": [cap for cap in ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "profiles", "displays", "identify_screens", "ping_rtt", "motion_path", "monitors")
+            "caps": [cap for cap in ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "profiles", "displays", "identify_screens", "ping_rtt", "motion_path", "monitors", "files")
                      if not (cap == "gestures" and OWN_PLATFORM == "linux")
-                     and not (cap == "monitors" and OWN_PLATFORM != "windows")],
+                     and not (cap in ("monitors", "files") and OWN_PLATFORM != "windows")],
             "port": self._settings_port,
         }
 
@@ -5585,6 +5681,8 @@ class WindowsApplication(QWidget):
         this PC's input is never here and elsewhere at once."""
         self.sender.set_receiving(bool(peer))
         was_driven, self._driven = self._driven, bool(peer)
+        if peer and getattr(self, "file_share", None) is not None:
+            self.file_share.activate()
         if self._idle_pointer is not None:
             if self._driven:
                 self._idle_pointer.cancel()
@@ -5682,6 +5780,8 @@ class WindowsApplication(QWidget):
         # even while the window is busy.
         self._set_driving_pointer(redirecting)
         self.bridge.redirecting.emit(redirecting)
+        if not redirecting and getattr(self, "file_share", None) is not None:
+            self.file_share.activate()
 
     def _on_redirecting(self, redirecting: bool) -> None:
         self._sending_detail = (
@@ -5765,6 +5865,8 @@ class WindowsApplication(QWidget):
             self.pairing.stop()
         if self.shared_monitors is not None:
             self.shared_monitors.stop()
+        if getattr(self, "file_share", None) is not None:
+            self.file_share.stop()
         self.server.stop()
         self._stop_sending()
         shortcut = getattr(self, "global_shortcut", None)
@@ -6066,6 +6168,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden", action="store_true", help="start in the tray without showing the window")
     parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--identify-x11", help=argparse.SUPPRESS)
+    # Explorer's Send to → Beamer (other PC): the selected files, handed to the running Beamer.
+    parser.add_argument("--send", nargs="*", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -6235,6 +6339,9 @@ def main() -> None:
     if release is None and arguments.relaunched:
         release = _claim_instance_waiting(RELAUNCH_WAIT_SECONDS, claim=_claim_instance)
     if release is None:
+        if arguments.send is not None:
+            send_instance_activation(send=[str(Path(path).resolve()) for path in arguments.send])
+            return
         activate_existing_instance(arguments.hidden, os.environ.get("XDG_ACTIVATION_TOKEN"))
         return
     startup_admin_error = None
@@ -6292,10 +6399,14 @@ def main() -> None:
         controller_release = None
         # Started here, not by the window: it reads and switches real monitors.
         application._start_shared_monitors()
+        application._start_file_share()
         if startup_admin_error is not None:
             application._on_admin_mode_changed(startup_admin_error)
         quit_signals = quit_signals_module.QuitSignals(application.quit, parent=app)
-        instance_signal = InstanceSignal(application.show_window, parent=app)
+        instance_signal = InstanceSignal(application.show_window, parent=app, send=application.bridge.files_send.emit)
+        if arguments.send:
+            # No Beamer was running: send once the links have had time to come up.
+            QTimer.singleShot(5000, lambda: application.send_files([str(Path(path).resolve()) for path in arguments.send]))
         if not instance_signal.listening:
             LOGGER.warning("Could not start the second-launch listener: %s", instance_signal.server.errorString())
         if not arguments.hidden or not application.tray_shown():

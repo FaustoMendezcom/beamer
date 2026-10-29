@@ -367,6 +367,14 @@ class PeerBook:
             return ADMITTED, copy.deepcopy(entry)
 
 
+class _DataRequest:
+    """A data connection after its handshake: the peer's pairing entry, the offer it fetches and
+    the id it gave (WIRE.md section 10, files)."""
+
+    def __init__(self, sock, session, entry, offer, requester) -> None:
+        self.sock, self.session, self.entry, self.offer, self.requester = sock, session, entry, offer, requester
+
+
 class _Link:
     """One authenticated link an initiator opened to this machine. Read-ahead keeps motion current
     while its serving thread injects; its writer sends everything that goes out (the `outbox`) and
@@ -424,6 +432,8 @@ class _Link:
             if message.get("type") == protocol.MSG_IDENTIFY_SCREENS and "identify_screens" not in self.caps:
                 return True
             if message.get("type") == protocol.MSG_MONITORS and "monitors" not in self.caps:
+                return True
+            if message.get("type") == protocol.MSG_FILES and "files" not in self.caps:
                 return True
             if len(self.outbox) >= OUTBOX_LIMIT:
                 LOGGER.warning("%s stopped reading; closing its link", self.name)
@@ -517,7 +527,8 @@ class LinkResponder:
     `arrangement_callback(peer, {edge, set_at, by})`; `settings_callback(peer, data)`, only from a
     peer whose `caps` list `settings`; `identify_callback(peer, labels)` when both ends support
     screen identification; `monitors_callback(peer, (action, monitors))` when both ends share
-    monitors (section 8); `paired_callback(peer, ids)`; `link_callback(peer, up)`; and
+    monitors (section 8); `files_callback(peer, read)` for copied files (section 10);
+    `paired_callback(peer, ids)`; `link_callback(peer, up)`; and
     `announce(peer)`, the messages to send once a link is up (section 3, announcements).
     `status_callback(state, detail)` takes ServerState.
 
@@ -546,6 +557,7 @@ class LinkResponder:
         settings_callback=None,
         identify_callback=None,
         monitors_callback=None,
+        files_callback=None,
         paired_callback=None,
         link_callback=None,
         announce=None,
@@ -565,7 +577,7 @@ class LinkResponder:
         self._callbacks = {
             "owner": owner_callback, "arrival": arrival_callback, "pressure": pressure_callback,
             "arrangement": arrangement_callback, "settings": settings_callback, "paired": paired_callback,
-            "identify": identify_callback, "monitors": monitors_callback,
+            "identify": identify_callback, "monitors": monitors_callback, "files": files_callback,
             "link": link_callback,
         }
         # A local chord seen in the owner's keys before they are typed here: given (name, down), True
@@ -573,6 +585,10 @@ class LinkResponder:
         self.key_watch: Optional[Callable[[str, bool], bool]] = None
         # A Windows receiver driven from a Mac: Command-C/V/X copy, paste and cut (core.mac_shortcuts).
         self.mac_shortcuts = False
+        # Told each button the owner presses or lets go here, after it is injected: (name, down).
+        self.button_watch: Optional[Callable[[str, bool], None]] = None
+        # Serves a peer's data connection (_DataRequest), on that connection's thread; None refuses.
+        self.files_server: Optional[Callable[["_DataRequest"], None]] = None
         self._announce = announce or (lambda peer: [])
         self._prebound_listener = listener
         # This machine's speed for a peer's pointer and scroll, and whether
@@ -779,7 +795,9 @@ class LinkResponder:
                 self._slots.free(host, connection)
                 self._handshaking -= 1
         try:
-            if link is not None:
+            if isinstance(link, _DataRequest):
+                self._serve_files(link)
+            elif link is not None:
                 self._serve(link)
         finally:
             with self._lock:
@@ -810,7 +828,12 @@ class LinkResponder:
             connection.settimeout(max(0.001, deadline - time.monotonic()))
             connection.sendall(session.preamble())
             try:
-                hello = protocol.read_hello(protocol.recv_first_msg(connection, session, deadline))
+                first = protocol.recv_first_msg(connection, session, deadline)
+                fetch = protocol.read_files_fetch(first)
+                if fetch is not None:
+                    # A data connection (section 10, files): served on its own, never a link.
+                    return _DataRequest(connection, session, dict(entry), *fetch)
+                hello = protocol.read_hello(first)
             except (protocol.NotAnObject, protocol.InvalidHello):
                 LOGGER.warning("%s sent a first frame that is not a valid hello", host)
                 self._answer(connection, host, session.seal(protocol.invalid_hello_v6()))
@@ -851,6 +874,20 @@ class LinkResponder:
             return None
         return _Link(connection, session, hello["id"], key_id, host, hello["name"], hello["caps"], own_id, identity["caps"], allow_drive,
                      hello["platform"])
+
+    def _serve_files(self, request: "_DataRequest") -> None:
+        """A peer fetching files this machine offered: `files_server(request)` sends them, on this
+        connection's thread. The peer must be the pairing the connection authenticated as."""
+        server = getattr(self, "files_server", None)
+        if protocol.read_id(request.entry.get("id")) != request.requester or server is None:
+            LOGGER.warning("A file fetch from %s was not for this pairing; closed", request.entry.get("name"))
+            return
+        try:
+            server(request)
+        except OSError as exc:
+            LOGGER.info("Sending files to %s stopped: %s", request.entry.get("name"), exc)
+        except Exception:
+            LOGGER.exception("Sending files to %s failed", request.entry.get("name"))
 
     def _hardware_towards(self, host, identity):
         """The `hw` for the welcome to `host`, as the initiator's hook does for its hello: the hook is
@@ -1076,6 +1113,10 @@ class LinkResponder:
                 read = protocol.read_monitors(message)
                 if read is not None and "monitors" in link.caps and "monitors" in link.own_caps:
                     self._callback("monitors", link.peer_id, read)
+            elif kind == protocol.MSG_FILES:
+                read = protocol.read_files(message)
+                if read is not None and "files" in link.caps and "files" in link.own_caps:
+                    self._callback("files", link.peer_id, read)
             elif kind == protocol.MSG_PING:
                 self._on_ping(link, message)
             elif kind == protocol.MSG_PAIRED:
@@ -1359,6 +1400,12 @@ class LinkResponder:
             else:
                 link.held.pop(("button", read["button"]), None)
             injector.inject_mouse_button(read["button"], down=down)
+            watch = getattr(self, "button_watch", None)
+            if watch is not None:
+                try:
+                    watch(read["button"], down)
+                except Exception:
+                    LOGGER.exception("The button watch could not read a button")
         elif kind == protocol.MSG_SCROLL:
             dy, dx = read["dy"], read["dx"]
             if self.input_scale is not None:

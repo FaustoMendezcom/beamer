@@ -248,6 +248,7 @@ class LinkSender:
         self.settings_callback: Optional[Callable] = None
         self.identify_callback: Optional[Callable] = None
         self.monitors_callback: Optional[Callable] = None
+        self.files_callback: Optional[Callable] = None
         self.paired_callback: Optional[Callable] = None
         self.link_callback: Optional[Callable[[bytes, bool], None]] = None
 
@@ -1074,6 +1075,10 @@ class LinkSender:
             read = protocol.read_monitors(message)
             if read is not None and self.monitors_callback is not None and "monitors" in self.links.caps(peer):
                 self._call(self.monitors_callback, peer, read)
+        elif kind == protocol.MSG_FILES:
+            read = protocol.read_files(message)
+            if read is not None and self.files_callback is not None and "files" in self.links.caps(peer):
+                self._call(self.files_callback, peer, read)
         elif kind == protocol.MSG_PAIRED:
             read = protocol.read_paired(message)
             if read is not None and self.paired_callback is not None:

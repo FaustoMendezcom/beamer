@@ -4211,6 +4211,75 @@ msgstr ""
 msgid "No push. Current pressure is 0 of {threshold} pointer units."
 msgstr ""
 
+#: win_app/drop_landing_win.py
+#, python-brace-format
+msgid "Release to copy {label} here"
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{count} items"
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{count} files"
+msgstr ""
+
+#: win_app/file_share_win.py
+msgid "Those files are no longer offered: copy them again."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Files over {size}"
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{label} from {name}: paste within {minutes} min."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{label} from {name} copied to {folder}."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{label} are too large to paste here (over {size})."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "{label} arrived but could not be put on the clipboard."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Not enough room in {folder} for {label} ({size})."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Those files are too large to send: {why}."
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Receiving {label} ({size}) from {name}…"
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Could not receive {label} from {name}: {why}"
+msgstr ""
+
+#: win_app/file_share_win.py
+#, python-brace-format
+msgid "Could not receive {label}: {why}"
+msgstr ""
+
 #: win_app/firewall_win.py
 msgid "Windows treats this network as public; if you trust it, change its network profile to Private in Windows Settings."
 msgstr ""
@@ -4656,6 +4725,10 @@ msgid "Beamer will run as administrator on this PC. Changing this restarts Beame
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "No PC that takes files is connected."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "No monitor is shared with a connected PC. Run Beamer on the other PC wired to these monitors and pair it with this one."
 msgstr ""
 
@@ -4836,6 +4909,11 @@ msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "No portable download is available for this release. See What's new."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "Sending {label} to {name}."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -5416,6 +5494,10 @@ msgstr ""
 #: win_app/sender.py
 #, python-brace-format
 msgid "Cannot switch — the desktop did not let Beamer send input to {name}"
+msgstr ""
+
+#: win_app/shell_folder_win.py
+msgid "Send the selected files to the other PC with Beamer"
 msgstr ""
 
 #: win_app/widgets.py
