@@ -1178,7 +1178,15 @@ class LinkResponder:
 
     def _apply_motion_path_locked(self, link, read, after):
         desktop = self._desktop_module()
-        pointer, monitors = desktop.cursor_position(), desktop.monitors()
+        try:
+            pointer, monitors = desktop.cursor_position(), desktop.monitors()
+        except OSError:
+            # The secure desktop, as in _apply_input_locked: the path's moves go as one.
+            dx = sum(sample[0] for sample in read["samples"])
+            dy = sum(sample[1] for sample in read["samples"])
+            plain = {key: value for key, value in read.items() if key != "samples"}
+            self._inject_timed_locked(link, dict(plain, dx=dx, dy=dy))
+            return
         display_map = getattr(desktop, "display_map", lambda: {})()
         geometry = (monitors, pointer, display_map)
         scale = max(1.0, self.input_scale.pointer if self.input_scale is not None else 1.0)
@@ -1277,7 +1285,12 @@ class LinkResponder:
 
     def _apply_input_locked(self, link, read, after):
         zones_at = time.monotonic()
-        consumed = read["type"] == protocol.MSG_MOUSEMOVE and self._zones_locked(link, read, after)
+        try:
+            consumed = read["type"] == protocol.MSG_MOUSEMOVE and self._zones_locked(link, read, after)
+        except OSError:
+            # The pointer cannot be read on the secure desktop (UAC, the lock screen): no edge is
+            # there to cross, and the move still goes, to the secure desktop helper if installed.
+            consumed = False
         link.timing.add("zones", time.monotonic() - zones_at)
         if not consumed:
             self._inject_timed_locked(link, read)
@@ -1429,7 +1442,10 @@ class LinkResponder:
         if not self._armed or not (dx or dy):
             return dx, dy
         desktop = self._desktop_module()
-        monitors, pointer = desktop.monitors(), desktop.cursor_position()
+        try:
+            monitors, pointer = desktop.monitors(), desktop.cursor_position()
+        except OSError:
+            return dx, dy
         display_map = getattr(desktop, "display_map", lambda: {})()
         bounds = crossing.union(monitors)
         earliest = 1.0
