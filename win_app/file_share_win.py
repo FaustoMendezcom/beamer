@@ -32,6 +32,7 @@ LARGE_BYTES = 50 * 1024 * 1024
 SEND_MAX_BYTES = 1024 ** 4
 # A dropped set waits this long for the button to be let go before it goes to Downloads\Beamer.
 DROP_WAIT_SECONDS = 20
+FETCHES_AT_ONCE = 2
 
 
 def _size(total: int) -> str:
@@ -56,7 +57,8 @@ class FileShare:
                  notify: Callable[[str], None], paste_seconds: int = PASTE_SECONDS,
                  fetch=file_transfer.fetch, max_bytes: int = file_transfer.PASTE_MAX_BYTES,
                  received: Callable[[], str] = lambda: "", dropped: Optional[Callable[[dict], None]] = None,
-                 opened: Optional[Callable[[str], None]] = None):
+                 opened: Optional[Callable[[str], None]] = None,
+                 may_read: Callable[[str], bool] = lambda path: True):
         """`clipboard` is clipboard_files_win (or a fake); `send(peer, message)` posts on a link;
         `targets()` the linked peers that take `files`; `peer(id)` its (host, port, token, name).
         `received()` is the Downloads/Beamer folder; `dropped(incoming)` arms the landing for a dragged set,
@@ -74,6 +76,10 @@ class FileShare:
         self._received = received
         self._dropped = dropped
         self._opened = opened
+        # What this PC may offer: an elevated Beamer offers only what its user could read itself.
+        self._may_read = may_read
+        # At most this many fetches at once: a peer's offers cannot start them without end.
+        self._fetching = threading.BoundedSemaphore(FETCHES_AT_ONCE)
         self._lock = threading.RLock()
         self._offers: Dict[bytes, dict] = {}     # what this PC offered: id -> items, sources, made
         self._latest: Optional[bytes] = None
@@ -137,7 +143,7 @@ class FileShare:
             return
         offer = os.urandom(16)
         try:
-            items, sources, total = file_transfer.build_manifest(paths, self._max_bytes)
+            items, sources, total = file_transfer.build_manifest(paths, self._max_bytes, self._may_read)
         except file_transfer.TooLarge:
             items, sources, total = [], [], self._max_bytes + 1
         if not items and total <= self._max_bytes:
@@ -156,7 +162,7 @@ class FileShare:
         """Offers `paths` to `peer` alone, to `drop` where the dragged files are let go there or to
         `send` to its downloads. The set's label, or None when there is nothing to send."""
         try:
-            items, sources, total = file_transfer.build_manifest(paths, SEND_MAX_BYTES)
+            items, sources, total = file_transfer.build_manifest(paths, SEND_MAX_BYTES, self._may_read)
         except file_transfer.TooLarge as exc:
             self._notify(tr("Those files are too large to send: {why}.").format(why=exc))
             return None
@@ -224,7 +230,7 @@ class FileShare:
         self._spawn(self._receive_to_clipboard, incoming)
 
     def _receive_to_clipboard(self, incoming: dict) -> None:
-        tops = self._receive(incoming, max_bytes=self._max_bytes)
+        tops = self._receive(incoming, max_bytes=min(self._max_bytes, incoming["total"]))
         if tops is None:
             return
         destination = os.path.dirname(tops[0])
@@ -251,6 +257,10 @@ class FileShare:
             return None
         host, port, token, name = found
         destination = os.path.join(self._staging, protocol.id_text(incoming["offer"]))
+        if not self._fetching.acquire(blocking=False):
+            LOGGER.warning("Not receiving %s from %s: %d transfers are already running", incoming["label"], name,
+                           FETCHES_AT_ONCE)
+            return None
         self.busy = True
         try:
             os.makedirs(destination, exist_ok=False)
@@ -275,6 +285,7 @@ class FileShare:
             return None
         finally:
             self.busy = False
+            self._fetching.release()
 
     def deliver(self, incoming: dict, folder: str, show: bool = False) -> Optional[List[str]]:
         """Fetches a dropped or sent set into `folder`, each top item under a free name there, and
@@ -293,7 +304,8 @@ class FileShare:
             self._notify(tr("Not enough room in {folder} for {label} ({size}).").format(
                 folder=folder, label=incoming["label"], size=_size(incoming["total"])))
             return None
-        tops = self._receive(incoming, max_bytes=SEND_MAX_BYTES)
+        # Held to the size the offer claimed, which the free-space check above used.
+        tops = self._receive(incoming, max_bytes=min(SEND_MAX_BYTES, incoming["total"]))
         if tops is None:
             return None
         placed = []

@@ -62,7 +62,10 @@ if ($Remove) {
         Remove-Item -Path $KeyPath -Recurse -Force
     }
     Remove-Item -Path $ServiceExe -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $InstallDir 'logs') -Recurse -Force -ErrorAction SilentlyContinue
     if ((Test-Path $InstallDir) -and -not (Get-ChildItem $InstallDir)) { Remove-Item $InstallDir -Force }
+    # Logs of earlier builds, which wrote under ProgramData.
+    Remove-Item -Path (Join-Path $env:ProgramData 'Beamer\secure-*.log*') -Force -ErrorAction SilentlyContinue
     Write-Host 'Beamer secure desktop input removed.' -ForegroundColor Green
     return
 }
@@ -74,6 +77,8 @@ if (-not (Test-Path -LiteralPath $ClientPath -PathType Leaf) -or [IO.Path]::GetF
 
 Stop-BeamerSecure
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+# Earlier builds logged under ProgramData, a folder any user can make; they log beside the exe now.
+Remove-Item -Path (Join-Path $env:ProgramData 'Beamer\secure-*.log*') -Force -ErrorAction SilentlyContinue
 Copy-WhenFree $ClientPath $ServiceExe
 
 New-Item -Path $KeyPath -Force | Out-Null

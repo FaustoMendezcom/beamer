@@ -885,6 +885,11 @@ class LinkResponder:
         if protocol.read_id(request.entry.get("id")) != request.requester or server is None:
             LOGGER.warning("A file fetch from %s was not for this pairing; closed", request.entry.get("name"))
             return
+        if (request.entry.get("in_use", True) is not True or request.entry.get("left_out") is True
+                or peerlist.dormant_reason(request.entry) is not None):
+            # As a link would be: a pairing turned off or set aside fetches nothing either.
+            LOGGER.info("A file fetch from %s, which is not in use, was closed", request.entry.get("name"))
+            return
         try:
             server(request)
         except OSError as exc:

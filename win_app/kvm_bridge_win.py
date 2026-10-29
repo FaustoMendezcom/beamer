@@ -1969,19 +1969,23 @@ class WindowsApplication(QWidget):
             return
         import drop_landing_win
         import shell_folder_win
+        import user_access_win
 
         self.file_share = file_share_win.FileShare(
             clipboard_files_win, own_id=protocol.read_id(self._config.machine_id), staging=str(staging),
             send=self._send_to, targets=self._file_targets, peer=self._file_peer,
             notify=lambda text: self.bridge.alert.emit(tr("Beamer"), text),
             received=shell_folder_win.received_folder, dropped=self.bridge.files_drop.emit,
-            opened=lambda folder: os.startfile(folder))
+            opened=lambda folder: os.startfile(folder), may_read=user_access_win.can_read)
         self.server.files_server = self.file_share.serve
         self.file_share.start()
         # Dragged files land where the button is let go here, elevated or not.
         self.drop_landing = drop_landing_win.DropLanding(
             desktop_win.cursor_position, shell_folder_win.folder_at, shell_folder_win.received_folder,
-            lambda incoming, folder: self.file_share._spawn(self.file_share.deliver, incoming, folder), parent=self)
+            lambda incoming, folder: self.file_share._spawn(
+                self.file_share.deliver, incoming,
+                # An elevated Beamer lands only where its user could put files itself.
+                folder if user_access_win.can_add_to(folder) else shell_folder_win.received_folder()), parent=self)
         self.bridge.files_drop.connect(self.drop_landing.arm)
         self.bridge.files_release.connect(self.drop_landing.released)
         self.bridge.files_send.connect(self.send_files)

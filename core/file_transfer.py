@@ -36,8 +36,14 @@ MAX_NAME_CHARS = 255
 MAX_PATH_CHARS = 1024
 
 DATA, END_OF_FILE, DONE = b"\x00", b"\x01", b"\x02"
-_RESERVED = {"con", "prn", "aux", "nul", *(f"com{n}" for n in range(1, 10)), *(f"lpt{n}" for n in range(1, 10))}
-_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+# Device names Windows opens whatever the extension, superscript digits included (COM\u00b9), and
+# the console's own.
+_RESERVED = {"con", "prn", "aux", "nul", "conin$", "conout$",
+             *(f"{device}{digit}" for device in ("com", "lpt") for digit in "123456789\u00b9\u00b2\u00b3")}
+# Control characters, and the bidirectional overrides and marks that make "gpj.exe" read as "exe.jpg".
+_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]')
+# A file time any file system takes: 1970 to 9999.
+MTIME_MAX = 253402300799
 
 
 class TransferError(Exception):
@@ -54,7 +60,7 @@ def safe_part(part: str) -> bool:
     """Whether one name from a peer can be written as it is on Windows and anywhere else."""
     return (isinstance(part, str) and 0 < len(part) <= MAX_NAME_CHARS and part not in (".", "..")
             and not _BAD_CHARS.search(part) and not part.endswith((".", " "))
-            and part.split(".")[0].lower() not in _RESERVED)
+            and part.split(".")[0].rstrip(" ").lower() not in _RESERVED)
 
 
 def safe_path(path: str) -> Optional[List[str]]:
@@ -78,11 +84,13 @@ def _unique(name: str, taken: set) -> str:
     return candidate
 
 
-def build_manifest(paths: Sequence[str], max_bytes: int = PASTE_MAX_BYTES):
+def build_manifest(paths: Sequence[str], max_bytes: int = PASTE_MAX_BYTES,
+                   readable: Callable[[str], bool] = lambda path: True):
     """(items, sources, total) for files and folders copied on this machine: `items` as the
     manifest sends them ({path, size, mtime, dir}), `sources` the local path of each (None for a
     folder). Links and other reparse points are left out, so nothing outside what was copied is
-    sent. Raises TooLarge past `max_bytes` or MAX_ITEMS."""
+    sent, nor anything `readable` refuses (an elevated sender reads only what its user could).
+    Raises TooLarge past `max_bytes` or MAX_ITEMS."""
     items, sources, total = [], [], 0
     taken = set()
 
@@ -102,7 +110,7 @@ def build_manifest(paths: Sequence[str], max_bytes: int = PASTE_MAX_BYTES):
             raise TooLarge("folders nested too deep")
         with os.scandir(local) as entries:
             for entry in sorted(entries, key=lambda item: item.name.lower()):
-                if not safe_part(entry.name) or entry.is_symlink() or _is_reparse(entry):
+                if not safe_part(entry.name) or entry.is_symlink() or _is_reparse(entry) or not readable(entry.path):
                     continue
                 child = f"{relative}/{entry.name}"
                 if entry.is_dir(follow_symlinks=False):
@@ -117,7 +125,7 @@ def build_manifest(paths: Sequence[str], max_bytes: int = PASTE_MAX_BYTES):
             info = os.lstat(local)
         except OSError:
             continue
-        if stat.S_ISLNK(info.st_mode) or _reparse(info):
+        if stat.S_ISLNK(info.st_mode) or _reparse(info) or not readable(local):
             continue
         name = os.path.basename(local.rstrip("\\/")) or "item"
         if not safe_part(name):
@@ -154,7 +162,7 @@ def read_manifest(items, max_bytes: int = PASTE_MAX_BYTES):
         parts = safe_path(item.get("path"))
         size, mtime, folder = item.get("size"), item.get("mtime"), item.get("dir")
         if (parts is None or type(folder) is not bool or type(size) is not int or size < 0
-                or type(mtime) is not int or (folder and size)):
+                or type(mtime) is not int or not 0 <= mtime <= MTIME_MAX or (folder and size)):
             raise TransferError("a file entry is malformed or names a path outside the transfer")
         key = "/".join(parts).lower()
         if key in seen or (len(parts) > 1 and "/".join(parts[:-1]).lower() not in folders):

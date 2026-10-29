@@ -191,5 +191,33 @@ class FileShareTests(unittest.TestCase):
         self.assertEqual(os.listdir(self.staging), ["new"])
 
 
+class QaFileShareTests(FileShareTests):
+    def test_a_delivery_is_held_to_the_size_it_claimed(self):
+        limits = []
+
+        def fetch(host, port, token, own_id, offer, destination, **kwargs):
+            limits.append(kwargs["max_bytes"])
+            return self.fake_fetch(host, port, token, own_id, offer, destination, **kwargs)
+
+        self.share._fetch = fetch
+        incoming = {"peer": PEER, "offer": bytes(range(70, 86)), "count": 1, "total": 5, "label": "a",
+                    "mode": "send", "at": time.time()}
+        self.share.deliver(incoming, os.path.join(self.root, "in"))
+        self.assertEqual(limits, [5])
+
+    def test_no_more_than_a_few_transfers_at_once(self):
+        for _ in range(file_share_win.FETCHES_AT_ONCE):
+            self.share._fetching.acquire()
+        incoming = {"peer": PEER, "offer": bytes(range(70, 86)), "count": 1, "total": 5, "label": "a",
+                    "mode": "send", "at": time.time()}
+        self.assertIsNone(self.share._receive(incoming, 10))
+        self.assertEqual(self.fetched, [])
+
+    def test_an_elevated_sender_offers_only_what_its_user_may_read(self):
+        self.share._may_read = lambda path: not path.endswith("secret.txt")
+        self.clipboard.copy([self.file("secret.txt")])
+        self.share.check()
+        self.assertEqual(self.sent, [])
+
 if __name__ == "__main__":
     unittest.main()

@@ -274,5 +274,20 @@ class LockedMachineTests(unittest.TestCase):
         self.assertEqual(len(asked), 2)
 
 
+class QaSecureDesktopTests(unittest.TestCase):
+    def test_long_text_goes_in_several_messages_within_the_limit(self):
+        sizes = []
+        helper = mock.Mock(send_inputs=lambda records, size: sizes.append(len(records)) or True)
+        count = 3000
+        with mock.patch.object(input_injector, "_secure", return_value=helper), \
+                mock.patch("desktop_win._on_default_desktop", return_value=False):
+            self.assertTrue(input_injector._to_secure_desktop((input_injector.INPUT * count)(), count))
+        self.assertEqual(sum(sizes), count * SIZE)
+        self.assertTrue(all(4 + size <= secure_input.MAX_PAYLOAD for size in sizes))
+        self.assertGreater(len(sizes), 1)
+
+    def test_nothing_is_logged_to_a_file_outside_program_files(self):
+        self.assertIsNone(secure_service.log_folder())
+
 if __name__ == "__main__":
     unittest.main()

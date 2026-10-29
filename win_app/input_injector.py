@@ -171,7 +171,13 @@ def _to_secure_desktop(array, count: int) -> bool:
 
         if desktop_win._on_default_desktop():
             return False
-        return _secure().send_inputs(ctypes.string_at(array, count * ctypes.sizeof(INPUT)), ctypes.sizeof(INPUT))
+        import secure_input
+
+        size = ctypes.sizeof(INPUT)
+        records = ctypes.string_at(array, count * size)
+        # Long typed text is many records: as many messages as the pipe's limit needs.
+        step = (secure_input.MAX_PAYLOAD - 4) // size * size
+        return all(_secure().send_inputs(records[start:start + step], size) for start in range(0, len(records), step))
     except Exception:
         LOGGER.exception("Could not pass input to the secure desktop helper")
         return False

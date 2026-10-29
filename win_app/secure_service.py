@@ -1,5 +1,5 @@
 """The BeamerSecureDesktop service (docs/secure-desktop.md): `BeamerSecure.exe --service`, as
-LocalSystem, from C:\\Program Files\\Beamer, installed by Install-Maintenance.ps1 -SecureDesktop.
+LocalSystem, from C:\\Program Files\\Beamer, installed by Install-SecureDesktop.ps1.
 
 It keeps one secure desktop helper running as SYSTEM in the active console session: started when
 a session takes the console, restarted if it ends, and replaced when the console moves to another
@@ -23,7 +23,12 @@ TOKEN_ADJUST_SESSIONID = 0x0100
 # this event and the service sends it. SYSTEM alone may open it.
 SAS_EVENT = r"Global\BeamerSecureDesktopSAS"
 SAS_EVENT_SDDL = "D:P(A;;GA;;;SY)"
-LOG_FOLDER = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "Beamer")
+# Logs sit beside the service exe under Program Files, which only administrators can change: a
+# folder anyone can make (C:\ProgramData\Beamer) could be swapped for a link and turn SYSTEM's
+# log writes and rotations into writes and deletes anywhere.
+LOG_FOLDER_NAME = "logs"
+ERROR_ALREADY_EXISTS = 183
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 
 
 class Supervisor:
@@ -80,11 +85,42 @@ def launch_helper(session: int):
     startup = win32process.STARTUPINFO()
     startup.lpDesktop = "winsta0\\default"
     exe = sys.executable
+    # Without the service's own PyInstaller variables, so the helper unpacks itself rather than
+    # running from the service's extraction folder, and outlives nothing of it.
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.upper().startswith(("_MEI", "_PYI", "PYINSTALLER"))}
     process, thread, _pid, _tid = win32process.CreateProcessAsUser(
         token, exe, f'"{exe}" --secure-helper', None, None, False,
-        win32con.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT, None, None, startup)
-    thread.Close()
+        win32con.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT | win32process.CREATE_SUSPENDED,
+        environment, None, startup)
+    try:
+        _HELPERS.assign(process)
+    finally:
+        win32process.ResumeThread(thread)
+        thread.Close()
     return process
+
+
+class _Job:
+    """A job that ends every helper when the service's handle to it closes, the service crashing
+    included, so no orphaned helper keeps the pipe."""
+
+    def __init__(self):
+        self._job = None
+
+    def assign(self, process) -> None:
+        import win32job
+
+        if self._job is None:
+            job = win32job.CreateJobObject(None, "")
+            limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+            limits["BasicLimitInformation"]["LimitFlags"] |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
+            self._job = job
+        win32job.AssignProcessToJobObject(self._job, process)
+
+
+_HELPERS = _Job()
 
 
 def send_sas() -> None:
@@ -98,14 +134,22 @@ def send_sas() -> None:
 
 
 def sas_event():
-    """The event the helper sets for Ctrl+Alt+Del, made by the service for SYSTEM only."""
+    """The event the helper sets for Ctrl+Alt+Del, made by the service for SYSTEM only, or None
+    when another program made one of that name first: its event could be set by anyone, or left
+    set, so Ctrl+Alt+Del is not offered at all rather than sent on someone else's say."""
+    import win32api
     import win32event
     import win32security
 
     attributes = win32security.SECURITY_ATTRIBUTES()
     attributes.SECURITY_DESCRIPTOR = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
         SAS_EVENT_SDDL, win32security.SDDL_REVISION_1)
-    return win32event.CreateEvent(attributes, False, False, SAS_EVENT)
+    event = win32event.CreateEvent(attributes, False, False, SAS_EVENT)
+    if win32api.GetLastError() == ERROR_ALREADY_EXISTS:
+        LOGGER.error("%s already existed, made by another program; Ctrl+Alt+Del stays off", SAS_EVENT)
+        event.Close()
+        return None
+    return event
 
 
 def process_alive(process) -> bool:
@@ -124,12 +168,34 @@ def stop_process(process) -> None:
         pass
 
 
+def log_folder() -> Optional[str]:
+    """The logs folder beside this exe, when it is a plain folder (not a link or junction) under
+    the protected Program Files; else None, and nothing is logged to a file."""
+    import stat
+
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    program_files = os.path.abspath(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    if not getattr(sys, "frozen", False) or os.path.commonpath([exe_dir.lower(), program_files.lower()]) != program_files.lower():
+        return None
+    folder = os.path.join(exe_dir, LOG_FOLDER_NAME)
+    try:
+        os.makedirs(folder, exist_ok=True)
+        info = os.lstat(folder)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return None
+    return folder
+
+
 def configure_logging(name: str) -> None:
     from logging.handlers import RotatingFileHandler
 
+    folder = log_folder()
+    if folder is None:
+        return
     try:
-        os.makedirs(LOG_FOLDER, exist_ok=True)
-        handler = RotatingFileHandler(os.path.join(LOG_FOLDER, name), maxBytes=1024 * 1024, backupCount=2,
+        handler = RotatingFileHandler(os.path.join(folder, name), maxBytes=1024 * 1024, backupCount=2,
                                       encoding="utf-8")
     except OSError:
         return
@@ -162,10 +228,11 @@ def run_service() -> None:
         def SvcDoRun(self):
             supervisor = Supervisor(console_session, launch_helper, process_alive, stop_process)
             sas = sas_event()
+            waits = [self.stop_event] + ([sas] if sas is not None else [])
             LOGGER.info("%s running", SERVICE_NAME)
             supervisor.check()
             while True:
-                woke = win32event.WaitForMultipleObjects([self.stop_event, sas], False, int(CHECK_SECONDS * 1000))
+                woke = win32event.WaitForMultipleObjects(waits, False, int(CHECK_SECONDS * 1000))
                 if woke == win32event.WAIT_OBJECT_0:
                     break
                 if woke == win32event.WAIT_OBJECT_0 + 1:

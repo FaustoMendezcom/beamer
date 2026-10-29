@@ -164,5 +164,52 @@ class FilesMessageTests(unittest.TestCase):
         self.assertEqual(protocol.read_files_fetch(protocol.files_fetch_msg(OFFER, B)), (OFFER, B))
 
 
+class QaHardeningTests(unittest.TestCase):
+    """From the adversarial review: names Windows still opens as devices, names that read
+    backwards, file times no file system takes, and an elevated sender reading for its user."""
+
+    def test_more_device_names_and_reversed_names_are_refused(self):
+        for name in ("COM\u00b9", "LPT\u00b2.txt", "CONIN$", "conout$.log", "con .txt", "a\u202egpj.exe",
+                     "b\u2066x", "c\u200fd"):
+            with self.subTest(name=name):
+                self.assertFalse(file_transfer.safe_part(name))
+        for name in ("com10.txt", "Report (2).pdf", "console.txt", "\u00e9t\u00e9.jpg"):
+            with self.subTest(name=name):
+                self.assertTrue(file_transfer.safe_part(name))
+
+    def test_a_file_time_out_of_range_refuses_the_manifest(self):
+        for mtime in (10 ** 30, 10 ** 12, -1):
+            with self.subTest(mtime=mtime), self.assertRaises(file_transfer.TransferError):
+                file_transfer.read_manifest([{"path": "a", "size": 1, "mtime": mtime, "dir": False}])
+
+    def test_what_the_sender_may_not_read_is_left_out(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        for name in ("open.txt", "secret.txt"):
+            with open(os.path.join(root, name), "wb") as handle:
+                handle.write(b"x")
+        items, _sources, _total = file_transfer.build_manifest(
+            [os.path.join(root, "open.txt"), os.path.join(root, "secret.txt")],
+            readable=lambda path: not path.endswith("secret.txt"))
+        self.assertEqual([item["path"] for item in items], ["open.txt"])
+
+class NotInUseFetchTests(FetchTests):
+    def setUp(self):
+        super().setUp()
+        self.machine.stop()
+        self.machine = Machine([entry(B, "Peer", in_use=False)], caps=tuple(CAPS) + ("files",)).start()
+        self.addCleanup(self.machine.stop)
+        self.machine.responder.files_server = lambda request: self.served.append(request.offer)
+
+    def test_a_pairing_not_in_use_fetches_nothing(self):
+        with self.assertRaises((file_transfer.TransferError, OSError, protocol.ProtocolError, protocol.ConnectionClosed)):
+            self.fetch()
+        self.assertEqual(self.served, [])
+
+    test_a_fetch_writes_every_file_and_folder_and_takes_no_link = None
+    test_an_unknown_offer_is_refused_in_words = None
+    test_a_fetch_claiming_another_machines_id_is_closed = None
+    test_cancelling_stops_partway = None
+
 if __name__ == "__main__":
     unittest.main()

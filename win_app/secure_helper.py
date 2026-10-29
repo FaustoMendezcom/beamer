@@ -9,6 +9,7 @@ Ctrl+Alt+Del) and sends the input there, or Ctrl+Alt+Del itself. It runs nothing
 import ctypes
 import logging
 import sys
+import time
 from typing import Callable, Optional
 
 import secure_input
@@ -19,6 +20,7 @@ PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
 FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
 # One serving, one waiting, so the name stays held while a client is dealt with.
 PIPE_INSTANCES = 2
+REFUSED_GRACE_SECONDS = 0.2
 # SYSTEM full; interactive users only read and write data (FILE_GENERIC_READ | FILE_WRITE_DATA),
 # never FILE_CREATE_PIPE_INSTANCE, which GENERIC_WRITE would include and which would let any
 # program add its own instance of this pipe. Who may actually use it is checked per client.
@@ -182,14 +184,16 @@ def serve_forever(session: Optional[int] = None) -> None:
     LOGGER.info("Secure desktop helper serving %s", name)
     while True:
         spare = None
+        allowed = False
         try:
             win32pipe.ConnectNamedPipe(pipe, None)
             spare = instance(first=False)
             info = _client_info(pipe)
             allowed, why = secure_input.client_allowed(info, allowed_client(), session)
             if not allowed:
+                # Answered at once, without waiting on anything it sends: a client that connects and
+                # stays silent must not hold the helper from Beamer.
                 LOGGER.warning("Refused %s (pid %s): %s", info.get("path"), info.get("pid"), why)
-                _read_message(pipe)
                 win32file.WriteFile(pipe, secure_input.answer(secure_input.REFUSED, why))
             else:
                 while True:
@@ -201,8 +205,13 @@ def serve_forever(session: Optional[int] = None) -> None:
             LOGGER.info("Secure desktop client gone: %s", exc)
         finally:
             try:
-                # Unread answers are discarded by a disconnect; let the client have them first.
-                win32file.FlushFileBuffers(pipe)
+                if allowed:
+                    # Unread answers are discarded by a disconnect; let Beamer have them first.
+                    win32file.FlushFileBuffers(pipe)
+                else:
+                    # A refused client gets a moment to read why, never a wait: flushing blocks until
+                    # it reads, and one that never does would hold the helper from Beamer.
+                    time.sleep(REFUSED_GRACE_SECONDS)
                 win32pipe.DisconnectNamedPipe(pipe)
             except pywintypes.error:
                 pass
