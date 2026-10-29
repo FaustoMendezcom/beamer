@@ -6350,9 +6350,10 @@ def main() -> None:
     release = _claim_instance()
     if release is None and arguments.relaunched:
         release = _claim_instance_waiting(RELAUNCH_WAIT_SECONDS, claim=_claim_instance)
+    sending = getattr(arguments, "send", None)
     if release is None:
-        if arguments.send is not None:
-            send_instance_activation(send=[str(Path(path).resolve()) for path in arguments.send])
+        if sending is not None:
+            send_instance_activation(send=[str(Path(path).resolve()) for path in sending])
             return
         activate_existing_instance(arguments.hidden, os.environ.get("XDG_ACTIVATION_TOKEN"))
         return
@@ -6416,9 +6417,9 @@ def main() -> None:
             application._on_admin_mode_changed(startup_admin_error)
         quit_signals = quit_signals_module.QuitSignals(application.quit, parent=app)
         instance_signal = InstanceSignal(application.show_window, parent=app, send=application.bridge.files_send.emit)
-        if arguments.send:
+        if sending:
             # No Beamer was running: send once the links have had time to come up.
-            QTimer.singleShot(5000, lambda: application.send_files([str(Path(path).resolve()) for path in arguments.send]))
+            QTimer.singleShot(5000, lambda: application.send_files([str(Path(path).resolve()) for path in sending]))
         if not instance_signal.listening:
             LOGGER.warning("Could not start the second-launch listener: %s", instance_signal.server.errorString())
         if not arguments.hidden or not application.tray_shown():
