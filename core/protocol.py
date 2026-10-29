@@ -460,7 +460,7 @@ MAX_MONITORS = 16
 _MONITOR_ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 
 
-def monitors_msg(action: str, monitors=(), host: bool = False) -> dict:
+def monitors_msg(action: str, monitors=(), host: bool = False, host_since: int = 0) -> dict:
     """Shared monitors, wired to two machines' inputs (WIRE.md section 8): `announce` lists this
     machine's monitors by EDID identity, each with the input code that shows this machine and the
     display key it has here; `give` says this machine has switched the monitors it shares with
@@ -472,12 +472,14 @@ def monitors_msg(action: str, monitors=(), host: bool = False) -> dict:
     if action == "announce":
         data["monitors"] = [dict(monitor) for monitor in monitors]
         data["host"] = bool(host)
+        if host:
+            data["host_since"] = int(host_since)
     return {"type": MSG_MONITORS, "data": data}
 
 
 def read_monitors(message):
-    """(action, [{id, code, display, showing}], host) or None. Only `announce` carries monitors
-    and `host`, which is false when absent."""
+    """(action, [{id, code, display, showing}], host, host_since) or None. Only `announce`
+    carries monitors and `host`, false when absent; `host_since` is when that claim was made."""
     parsed = read_message(message)
     if parsed is None or parsed[0] != MSG_MONITORS:
         return None
@@ -485,7 +487,7 @@ def read_monitors(message):
     if action not in MONITORS_ACTIONS:
         return None
     if action != "announce":
-        return action, [], False
+        return action, [], False, 0
     listed = parsed[1].get("monitors")
     if not isinstance(listed, list) or len(listed) > MAX_MONITORS:
         return None
@@ -501,9 +503,10 @@ def read_monitors(message):
     if len({item["id"] for item in monitors}) != len(monitors):
         return None
     host = parsed[1].get("host", False)
-    if type(host) is not bool:
+    since = parsed[1].get("host_since", 0)
+    if type(host) is not bool or not _int(since, 0, MAX_SAFE_INTEGER):
         return None
-    return action, monitors, host
+    return action, monitors, host, since
 
 
 def gesture_msg(name: str) -> dict:

@@ -25,10 +25,11 @@ def announced(*ids, code=8):
 class MonitorsMessageTests(unittest.TestCase):
     def test_each_action_round_trips_on_wire_6(self):
         listed = announced("GBT3403:A", "GBT3403:B")
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed)), ("announce", listed, False))
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed, host=True))[2], True)
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("give")), ("give", [], False))
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("request")), ("request", [], False))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed)), ("announce", listed, False, 0))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed, host=True, host_since=5))[2:],
+                         (True, 5))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("give")), ("give", [], False, 0))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("request")), ("request", [], False, 0))
         older = {"type": "monitors", "data": {"action": "announce", "monitors": listed}}
         self.assertEqual(protocol.read_monitors(older)[2], False)
         self.assertIsNone(protocol.read_monitors({"type": "monitors", "data": {"action": "announce",
@@ -69,7 +70,7 @@ class MonitorsMessageTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: bool(side.ups)))
         self.assertTrue(link.post(protocol.monitors_msg("request")))
         self.assertTrue(wait_for(lambda: bool(seen)))
-        self.assertEqual(seen, [(B, ("request", [], False))])
+        self.assertEqual(seen, [(B, ("request", [], False, 0))])
         self.assertIsNone(machine.responder.owner)
 
 

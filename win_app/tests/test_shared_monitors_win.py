@@ -159,12 +159,16 @@ class SharedMonitorsTests(unittest.TestCase):
         self.assertEqual(self.monitors.shared_keys(), {"0", "1"})
         self.assertTrue(self.monitors.has_own_display())
 
-    def test_two_host_claims_are_settled_by_the_lower_id(self):
+    def test_two_host_claims_go_to_the_earlier_then_the_lower_id(self):
         self.monitors.poll()
-        self.monitors.host = True
-        self.monitors._own_id = "ZZZZ"
-        self.monitors.set_peer(PC2, [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": False}], host=True)
+        self.monitors.host, self.monitors.host_since, self.monitors._own_id = True, 100, "zzzz"
+        listed = [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": False}]
+        self.monitors.set_peer(PC2, listed, host=True, host_since=200)
         self.assertTrue(self.monitors.peer_hosts())
+        self.assertTrue(self.monitors.moves_picture())
+        self.monitors.set_peer(PC2, listed, host=True, host_since=50)
+        self.assertFalse(self.monitors.moves_picture())
+        self.monitors.set_peer(PC2, listed, host=True, host_since=100)
         self.assertFalse(self.monitors.moves_picture())
         self.monitors._own_id = "AAAA"
         self.assertTrue(self.monitors.moves_picture())

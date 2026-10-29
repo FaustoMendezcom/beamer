@@ -22,7 +22,7 @@ SETTLE_SECONDS = 1.5
 class SharedMonitors:
     def __init__(self, ddc, desktop, *, codes: Dict[str, int], peers: Dict[str, List[dict]],
                  changed: Callable[[], None], learned: Callable[[Dict[str, int]], None],
-                 host: bool = False, own_id: str = ""):
+                 host: bool = False, own_id: str = "", host_since: int = 0):
         """`ddc` is monitors_ddc (or a fake), `desktop` desktop_win; `codes` and `peers` as
         settings keep them (shared_monitors.state); `learned(codes)` saves a newly read own code.
         `host`: the shared monitors belong to this PC's place in the picture (it moves the tiles
@@ -34,8 +34,9 @@ class SharedMonitors:
         self._changed = changed
         self._learned = learned
         self.host = host
+        self.host_since = host_since
         self._own_id = own_id
-        self._peer_host: Dict[str, bool] = {}
+        self._peer_host: Dict[str, tuple] = {}   # peer: (claims, since)
         self._lock = threading.RLock()
         self._monitors = []                  # monitors_ddc.Monitor, identified ones only
         self._display_count = 0              # every display, identified or not
@@ -104,13 +105,13 @@ class SharedMonitors:
             return True
         return False
 
-    def set_peer(self, peer: str, monitors: List[dict], host: bool = False) -> None:
+    def set_peer(self, peer: str, monitors: List[dict], host: bool = False, host_since: int = 0) -> None:
         """A peer's `announce`: the monitors it has, its codes on them, what each shows, and
         whether it is host for them."""
         with self._lock:
             before = self._away_locked()
             self._peers[peer] = list(monitors)
-            self._peer_host[peer] = bool(host)
+            self._peer_host[peer] = (bool(host), int(host_since))
             after = self._away_locked()
         if before != after:
             self._apply_fence()
@@ -165,14 +166,15 @@ class SharedMonitors:
             return self._display_count > len(self.shared_keys())
 
     def host_contested(self) -> bool:
-        """Another host claim that outranks this PC's: two claims are settled by the lower id."""
+        """Another host claim that outranks this PC's: the earlier claim, then the lower id. The
+        PC that loses gives its claim up (the app clears it), so the two never trade places."""
         with self._lock:
-            return any(claims and peer < self._own_id for peer, claims in self._peer_host.items()
-                       if peer in self.shared())
+            return any(claims and (since, peer) < (self.host_since, self._own_id)
+                       for peer, (claims, since) in self._peer_host.items() if peer in self.shared())
 
     def peer_hosts(self) -> bool:
         with self._lock:
-            return any(claims for peer, claims in self._peer_host.items() if peer in self.shared())
+            return any(claims for peer, (claims, _since) in self._peer_host.items() if peer in self.shared())
 
     def moves_picture(self) -> bool:
         """Whether this PC gives its shared monitors' place in the picture to the peer they show:

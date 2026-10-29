@@ -2055,13 +2055,16 @@ class WindowsApplication(QWidget):
             held = shared_monitors.state({})
         self._set_monitors_chord(held["key"])
         self.server.key_watch = self._monitors_chord_driven.feed
-        # Host: the shared monitors belong to this PC's place in the picture. Kept once claimed;
-        # a PC that has moved tiles for them before (a saved home) has claimed it already.
+        # Host: the shared monitors belong to this PC's place in the picture, kept once claimed.
+        # A claim saved without its time (an earlier build) counts from now, so it yields to one
+        # already standing.
+        since = held.get("host_since")
         self.shared_monitors = shared_monitors_win.SharedMonitors(
             monitors_ddc, desktop_win, codes=held["codes"], peers=held["peers"],
             changed=self.bridge.monitors_changed.emit,
             learned=lambda codes: self._save_shared_monitors(codes=codes),
-            host=held.get("host") is True or held["home"] is not None,
+            host=held.get("host") is True,
+            host_since=since if type(since) is int and since > 0 else int(time.time()),
             own_id=self._config.machine_id if self._config else "")
         self.shared_monitors.start()
         self.monitors_picture_timer = QTimer(self)
@@ -2095,7 +2098,8 @@ class WindowsApplication(QWidget):
             self._monitors_announced = announcement
             for peer, caps in self._peer_caps().items():
                 if "monitors" in caps:
-                    self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host))
+                    self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host,
+                                                              host_since=self.shared_monitors.host_since))
         away = self.shared_monitors.away()
         if away != self._monitors_away:
             self._apply_monitors_away(away)
@@ -2152,9 +2156,17 @@ class WindowsApplication(QWidget):
     def _on_monitors_message(self, peer: str, read) -> None:
         if self.shared_monitors is None:
             return
-        action, monitors, host = read
+        action, monitors, host, since = read
         if action == "announce":
-            self.shared_monitors.set_peer(peer, monitors, host)
+            self.shared_monitors.set_peer(peer, monitors, host, since)
+            if self.shared_monitors.host and self.shared_monitors.host_contested():
+                LOGGER.info("%s has been host for the shared monitors longer; this PC gives the claim up",
+                            self._label_of(protocol.read_id(peer)))
+                self.shared_monitors.host = False
+                self._save_shared_monitors(host=False, host_since=0)
+                self._monitors_announced = None
+                self._refresh_own_displays()
+                self._reconcile_displays()
             self._save_shared_monitors(peers=self.shared_monitors.snapshot()["peers"])
         elif action == "give":
             self.shared_monitors.taken(peer)
@@ -2200,8 +2212,9 @@ class WindowsApplication(QWidget):
         if monitors.host or monitors.peer_hosts() or not monitors.has_own_display():
             return
         monitors.host = True
+        monitors.host_since = int(time.time())
         LOGGER.info("This PC is host for the shared monitors: it keeps their place in the picture")
-        self._save_shared_monitors(host=True)
+        self._save_shared_monitors(host=True, host_since=monitors.host_since)
         self._monitors_announced = None
         self._on_shared_monitors_changed()
 
@@ -2362,7 +2375,8 @@ class WindowsApplication(QWidget):
                                             self._peer_caps().get(peer, ())))
         if getattr(self, "shared_monitors", None) is not None and "monitors" in self._peer_caps().get(peer, ()):
             messages.append(protocol.monitors_msg("announce", self.shared_monitors.announcement(),
-                                                  host=self.shared_monitors.host))
+                                                  host=self.shared_monitors.host,
+                                                  host_since=self.shared_monitors.host_since))
         return messages
 
     def _driver_platform(self) -> str:
