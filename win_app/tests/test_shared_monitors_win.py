@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import shared_monitors_win  # noqa: E402
 from core.return_edge import Rect  # noqa: E402
@@ -150,13 +150,28 @@ class SharedMonitorsTests(unittest.TestCase):
         self.monitors.set_peer(PC2, [{"id": "GBT3403:802", "code": 8, "display": "1", "showing": False}])
         self.assertEqual(self.monitors.away(), {})
 
-    def test_only_a_pc_with_a_display_of_its_own_moves_the_picture(self):
+    def test_only_the_host_with_a_display_of_its_own_moves_the_picture(self):
         self.monitors.poll()
         self.announce()
+        self.assertFalse(self.monitors.moves_picture())
+        self.monitors.host = True
+        self.assertTrue(self.monitors.moves_picture())
+        self.assertEqual(self.monitors.shared_keys(), {"0", "1"})
+        self.assertTrue(self.monitors.has_own_display())
+
+    def test_two_host_claims_are_settled_by_the_lower_id(self):
+        self.monitors.poll()
+        self.monitors.host = True
+        self.monitors._own_id = "ZZZZ"
+        self.monitors.set_peer(PC2, [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": False}], host=True)
+        self.assertTrue(self.monitors.peer_hosts())
+        self.assertFalse(self.monitors.moves_picture())
+        self.monitors._own_id = "AAAA"
         self.assertTrue(self.monitors.moves_picture())
         only = shared_monitors_win.SharedMonitors(
             type("Ddc", (FakeDdc,), {"monitors": lambda self: [RIGHT, LEFT]})(), self.desktop,
             codes={}, peers={}, changed=lambda: None, learned=lambda codes: None)
+        only.host = True
         only.poll()
         only.set_peer(PC2, [{"id": "GBT3403:972", "code": 7, "display": "0", "showing": False},
                             {"id": "GBT3403:802", "code": 7, "display": "1", "showing": False}])
@@ -171,6 +186,27 @@ class SharedMonitorsTests(unittest.TestCase):
         only.set_peer(PC2, [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": True},
                             {"id": "GBT3403:802", "code": 8, "display": "1", "showing": True}])
         self.assertEqual(only.away(), {})
+
+
+class GuestPictureTests(unittest.TestCase):
+    """A PC that is not host puts the shared monitors in the picture only while it shows them,
+    and its own other screen (a laptop's) never in their place."""
+
+    LAPTOP = Rect(3440, -170, 2560, 1600)
+
+    def displays(self, away):
+        import kvm_bridge_win
+
+        desktop = type("Desktop", (), {"display_map_all": staticmethod(
+            lambda: {"0": RIGHT.rect, "1": LEFT.rect, "2": self.LAPTOP})})()
+        monitors = type("Monitors", (), {"shared_keys": lambda self: {"0", "1"}, "away": lambda self: away})()
+        return kvm_bridge_win.WindowsApplication._guest_display_map(desktop, monitors)
+
+    def test_showing_them_reports_just_the_shared_ones(self):
+        self.assertEqual(sorted(self.displays({})), ["0", "1"])
+
+    def test_not_showing_them_reports_its_own_screen(self):
+        self.assertEqual(self.displays({"0": "host", "1": "host"}), {"2": self.LAPTOP})
 
 
 class EdidTests(unittest.TestCase):

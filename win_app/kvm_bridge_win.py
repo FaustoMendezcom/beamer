@@ -2048,10 +2048,14 @@ class WindowsApplication(QWidget):
             held = shared_monitors.state({})
         self._set_monitors_chord(held["key"])
         self.server.key_watch = self._monitors_chord_driven.feed
+        # Host: the shared monitors belong to this PC's place in the picture. Kept once claimed;
+        # a PC that has moved tiles for them before (a saved home) has claimed it already.
         self.shared_monitors = shared_monitors_win.SharedMonitors(
             monitors_ddc, desktop_win, codes=held["codes"], peers=held["peers"],
             changed=self.bridge.monitors_changed.emit,
-            learned=lambda codes: self._save_shared_monitors(codes=codes))
+            learned=lambda codes: self._save_shared_monitors(codes=codes),
+            host=held.get("host") is True or held["home"] is not None,
+            own_id=self._config.machine_id if self._config else "")
         self.shared_monitors.start()
         self.monitors_picture_timer = QTimer(self)
         self.monitors_picture_timer.setInterval(3000)
@@ -2084,7 +2088,7 @@ class WindowsApplication(QWidget):
             self._monitors_announced = announcement
             for peer, caps in self._peer_caps().items():
                 if "monitors" in caps:
-                    self._send_to(peer, protocol.monitors_msg("announce", announcement))
+                    self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host))
         away = self.shared_monitors.away()
         if away != self._monitors_away:
             self._apply_monitors_away(away)
@@ -2094,6 +2098,8 @@ class WindowsApplication(QWidget):
         self._monitors_away = dict(away)
         if self._config is None:
             return
+        if away:
+            self._claim_monitors_host()
         self._refresh_own_displays()
         if not self.shared_monitors.moves_picture():
             self._reconcile_displays()
@@ -2139,9 +2145,9 @@ class WindowsApplication(QWidget):
     def _on_monitors_message(self, peer: str, read) -> None:
         if self.shared_monitors is None:
             return
-        action, monitors = read
+        action, monitors, host = read
         if action == "announce":
-            self.shared_monitors.set_peer(peer, monitors)
+            self.shared_monitors.set_peer(peer, monitors, host)
             self._save_shared_monitors(peers=self.shared_monitors.snapshot()["peers"])
         elif action == "give":
             self.shared_monitors.taken(peer)
@@ -2168,6 +2174,7 @@ class WindowsApplication(QWidget):
                                             "PC wired to these monitors and pair it with this one."))
             return
         if self.shared_monitors.showing_here(peer):
+            self._claim_monitors_host()
             if not self.shared_monitors.give(peer):
                 self._on_alert(tr("Beamer"), tr("The monitors did not switch to {name}.").format(name=self._label_of(protocol.read_id(peer))))
                 return
@@ -2178,6 +2185,18 @@ class WindowsApplication(QWidget):
             self._send_to(protocol.read_id(peer), protocol.monitors_msg("request"))
             if self.sender.owner == protocol.read_id(peer):
                 self.sender.set_redirecting(False)
+
+    def _claim_monitors_host(self) -> None:
+        """The first PC to switch the shared monitors away, with a display of its own to keep,
+        becomes their host, unless the other already is."""
+        monitors = self.shared_monitors
+        if monitors.host or monitors.peer_hosts() or not monitors.has_own_display():
+            return
+        monitors.host = True
+        LOGGER.info("This PC is host for the shared monitors: it keeps their place in the picture")
+        self._save_shared_monitors(host=True)
+        self._monitors_announced = None
+        self._on_shared_monitors_changed()
 
     def _pass_input_to(self, peer: str) -> None:
         """Moves the input that is on this PC to `peer`, landing on a monitor it now shows."""
@@ -2335,7 +2354,8 @@ class WindowsApplication(QWidget):
         messages.extend(self._desk_messages(profiles.desk_message(outcome["settings"]),
                                             self._peer_caps().get(peer, ())))
         if getattr(self, "shared_monitors", None) is not None and "monitors" in self._peer_caps().get(peer, ()):
-            messages.append(protocol.monitors_msg("announce", self.shared_monitors.announcement()))
+            messages.append(protocol.monitors_msg("announce", self.shared_monitors.announcement(),
+                                                  host=self.shared_monitors.host))
         return messages
 
     def _driver_platform(self) -> str:
@@ -3212,10 +3232,21 @@ class WindowsApplication(QWidget):
                 refresh()
             monitors = getattr(self, "shared_monitors", None)
             if monitors is not None and not monitors.moves_picture() and hasattr(desktop, "display_map_all"):
-                # The other machine moves the tiles for the shared monitors; this one's tile keeps them all.
-                self._own_display_map = desktop.display_map_all()
+                self._own_display_map = self._guest_display_map(desktop, monitors)
             else:
                 self._own_display_map = desktop.display_map()
+
+    @staticmethod
+    def _guest_display_map(desktop, monitors) -> dict:
+        """The displays a PC that is not host for its shared monitors puts in the picture: just
+        the shared ones while it shows them, so they take the place the host keeps for them and
+        its own other displays (a laptop's screen) stay out of it; else its other displays."""
+        every = desktop.display_map_all()
+        shared, away = monitors.shared_keys(), monitors.away()
+        showing = {key: rect for key, rect in every.items() if key in shared and key not in away}
+        if showing:
+            return showing
+        return {key: rect for key, rect in every.items() if key not in shared} or every
 
     def _screen_added(self, screen) -> None:
         screen.geometryChanged.connect(self._displays_changed)

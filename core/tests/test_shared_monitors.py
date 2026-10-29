@@ -25,9 +25,14 @@ def announced(*ids, code=8):
 class MonitorsMessageTests(unittest.TestCase):
     def test_each_action_round_trips_on_wire_6(self):
         listed = announced("GBT3403:A", "GBT3403:B")
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed)), ("announce", listed))
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("give")), ("give", []))
-        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("request")), ("request", []))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed)), ("announce", listed, False))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("announce", listed, host=True))[2], True)
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("give")), ("give", [], False))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("request")), ("request", [], False))
+        older = {"type": "monitors", "data": {"action": "announce", "monitors": listed}}
+        self.assertEqual(protocol.read_monitors(older)[2], False)
+        self.assertIsNone(protocol.read_monitors({"type": "monitors", "data": {"action": "announce",
+                                                                               "monitors": listed, "host": 1}}))
         self.assertEqual(protocol.LINK_VERSION, 6)
 
     def test_rejects_malformed_monitors(self):
@@ -64,7 +69,7 @@ class MonitorsMessageTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: bool(side.ups)))
         self.assertTrue(link.post(protocol.monitors_msg("request")))
         self.assertTrue(wait_for(lambda: bool(seen)))
-        self.assertEqual(seen, [(B, ("request", []))])
+        self.assertEqual(seen, [(B, ("request", [], False))])
         self.assertIsNone(machine.responder.owner)
 
 

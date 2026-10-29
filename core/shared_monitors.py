@@ -128,7 +128,8 @@ def away_layout(layout: dict, own_id: str, peer: str, away_keys: Iterable[str]) 
 
 def home_layout(layout: dict, own_id: str, peer: str, home: dict, own_displays: dict) -> dict:
     """The picture with the shared displays back on `own_id`: its tile as `home` kept it, its
-    displays as reported now, and `peer`'s tile parked below everything, touching nothing."""
+    displays as reported now, and `peer`'s tile left where it is unless it would overlap or touch
+    this machine's (where it stood in for the shared displays), then parked below everything."""
     result = copy.deepcopy(layout)
     tile = result.setdefault(own_id, {})
     for key in ("x", "y", "w", "h"):
@@ -138,9 +139,18 @@ def home_layout(layout: dict, own_id: str, peer: str, home: dict, own_displays: 
         tile["displays"] = copy.deepcopy(own_displays)
     if isinstance(home.get("display_offsets"), dict):
         tile["display_offsets"] = copy.deepcopy(home["display_offsets"])
-    if peer in result:
+    if peer in result and _in_the_way(result, own_id, peer):
         result[peer] = park(result, peer)
     return result
+
+
+def _in_the_way(layout: dict, own_id: str, peer: str) -> bool:
+    """Whether `peer`'s tile overlaps or touches any of `own_id`'s displays."""
+    tile = layout.get(peer)
+    if not isinstance(tile, dict) or not all(type(tile.get(key)) is int for key in ("x", "y", "w", "h")):
+        return False
+    frames = ways._display_frames(layout[own_id])
+    return any(ways._overlaps(tile, frame) or ways._rect_contact(frame, tile) is not None for frame in frames)
 
 
 def park(layout: dict, peer: str) -> dict:

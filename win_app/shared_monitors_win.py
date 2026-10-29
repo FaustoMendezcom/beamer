@@ -21,15 +21,21 @@ SETTLE_SECONDS = 1.5
 
 class SharedMonitors:
     def __init__(self, ddc, desktop, *, codes: Dict[str, int], peers: Dict[str, List[dict]],
-                 changed: Callable[[], None], learned: Callable[[Dict[str, int]], None]):
+                 changed: Callable[[], None], learned: Callable[[Dict[str, int]], None],
+                 host: bool = False, own_id: str = ""):
         """`ddc` is monitors_ddc (or a fake), `desktop` desktop_win; `codes` and `peers` as
-        settings keep them (shared_monitors.state); `learned(codes)` saves a newly read own code."""
+        settings keep them (shared_monitors.state); `learned(codes)` saves a newly read own code.
+        `host`: the shared monitors belong to this PC's place in the picture (it moves the tiles
+        for them); `own_id` this PC's id, which settles two PCs both claiming to be host."""
         self._ddc = ddc
         self._desktop = desktop
         self._codes = dict(codes)
         self._peers = {peer: list(listed) for peer, listed in peers.items()}
         self._changed = changed
         self._learned = learned
+        self.host = host
+        self._own_id = own_id
+        self._peer_host: Dict[str, bool] = {}
         self._lock = threading.RLock()
         self._monitors = []                  # monitors_ddc.Monitor, identified ones only
         self._display_count = 0              # every display, identified or not
@@ -98,11 +104,13 @@ class SharedMonitors:
             return True
         return False
 
-    def set_peer(self, peer: str, monitors: List[dict]) -> None:
-        """A peer's `announce`: the monitors it has, its codes on them and what each shows."""
+    def set_peer(self, peer: str, monitors: List[dict], host: bool = False) -> None:
+        """A peer's `announce`: the monitors it has, its codes on them, what each shows, and
+        whether it is host for them."""
         with self._lock:
             before = self._away_locked()
             self._peers[peer] = list(monitors)
+            self._peer_host[peer] = bool(host)
             after = self._away_locked()
         if before != after:
             self._apply_fence()
@@ -142,16 +150,36 @@ class SharedMonitors:
             return {}
         return result
 
-    def moves_picture(self) -> bool:
-        """Whether this PC gives its shared monitors' place in the picture to the peer they show:
-        only one with a display of its own that no peer shares, so of the two machines wired to
-        them exactly one moves tiles (on the other, its only displays are the shared ones)."""
+    def shared_keys(self) -> set:
+        """This PC's display keys for the monitors it shares with a peer."""
         from core import shared_monitors
 
         with self._lock:
             shared = {monitor["id"] for listed in shared_monitors.shared_with(
                 [m.edid_id for m in self._monitors], self._peers).values() for monitor in listed}
-            return self._display_count > len([m for m in self._monitors if m.edid_id in shared])
+            return {m.key for m in self._monitors if m.edid_id in shared}
+
+    def has_own_display(self) -> bool:
+        """Whether this PC has a display no peer shares (this PC's top screen, a laptop's own)."""
+        with self._lock:
+            return self._display_count > len(self.shared_keys())
+
+    def host_contested(self) -> bool:
+        """Another host claim that outranks this PC's: two claims are settled by the lower id."""
+        with self._lock:
+            return any(claims and peer < self._own_id for peer, claims in self._peer_host.items()
+                       if peer in self.shared())
+
+    def peer_hosts(self) -> bool:
+        with self._lock:
+            return any(claims for peer, claims in self._peer_host.items() if peer in self.shared())
+
+    def moves_picture(self) -> bool:
+        """Whether this PC gives its shared monitors' place in the picture to the peer they show:
+        only the host, and only one with a display of its own to keep. The other PC wired to them
+        never moves a tile, so the two never write the picture against each other; while it
+        shows them it puts just them in the picture, where the host keeps their place."""
+        return self.host and self.has_own_display() and not self.host_contested()
 
     def announcement(self) -> List[dict]:
         """This PC's monitors for an `announce`: those with a known own code."""
