@@ -101,16 +101,30 @@ def wants_dark(choice: str, system_dark: bool) -> bool:
     return system_dark
 
 
+def _other_account_sid():
+    """The signed-in user's SID when Beamer runs as another account (a standard user approving it
+    with an administrator's credentials), whose own light/dark choice is then not this process's."""
+    try:
+        import shell_folder_win
+
+        user = shell_folder_win.session_user()
+    except Exception:
+        return None
+    return user[0] if user else None
+
+
 def system_dark() -> bool:
     """The system's own light/dark choice. AppsUseLightTheme, not the taskbar's
-    SystemUsesLightTheme, which Windows lets disagree with it -- this window is an app."""
+    SystemUsesLightTheme, which Windows lets disagree with it -- this window is an app. The signed-in
+    user's, also when Beamer runs as an administrator account it was elevated with."""
     try:
         if sys.platform == "win32":
             import winreg
 
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-            ) as key:
+            personalize = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            other = _other_account_sid()
+            hive, subkey = (winreg.HKEY_USERS, rf"{other}\{personalize}") if other else (winreg.HKEY_CURRENT_USER, personalize)
+            with winreg.OpenKey(hive, subkey) as key:
                 return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
     except (ImportError, OSError):
         pass
@@ -122,6 +136,9 @@ def system_dark() -> bool:
     from PySide6.QtCore import Qt
 
     return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
+OTHER_ACCOUNT_POLL_MS = 3000
 
 
 def watch_system(callback) -> None:
@@ -137,6 +154,22 @@ def watch_system(callback) -> None:
     hints = app.styleHints()
     if hasattr(hints, "colorSchemeChanged"):
         hints.colorSchemeChanged.connect(lambda _scheme: callback())
+    if _other_account_sid() is not None:
+        # Qt watches this process's own account, not the signed-in user's: follow theirs by looking.
+        from PySide6.QtCore import QTimer
+
+        timer = QTimer(app)
+        timer.setInterval(OTHER_ACCOUNT_POLL_MS)
+        last = [system_dark()]
+
+        def look():
+            now = system_dark()
+            if now != last[0]:
+                last[0] = now
+                callback()
+
+        timer.timeout.connect(look)
+        timer.start()
 
 
 def state_tone(state: str) -> str:
