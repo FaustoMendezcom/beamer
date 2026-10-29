@@ -330,20 +330,34 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
     with the displays reported before they are hidden when going away, and after when coming home.
     Already away, the picture is rebuilt from the saved home and `all_displays` (every display of
     this machine, the away ones too) and put back if it differs: a picture another machine built
-    before the move can arrive after it, stamped later, and undo it."""
+    before the move can arrive after it, stamped later, and undo it.
+
+    The tile it came home to is kept (`kept`), as the place it holds with every display: a picture
+    from another machine that moves or shrinks it while home is put right, and the next move away
+    starts from it rather than from whatever the picture then holds. A change this machine made
+    itself (its own Crossing page) becomes the kept place instead."""
     saved = _initial(settings, capable)
     own = saved.get("machine_id", "")
     held = saved.get(shared_monitors.SETTINGS_KEY)
     held = copy.deepcopy(held) if isinstance(held, dict) else {}
     home = held.get("home") if isinstance(held.get("home"), dict) else None
+    kept = held.get("kept") if isinstance(held.get("kept"), dict) else None
     away_keys = sorted(set(away_keys))
     tile = saved["layout"].get(own)
     moved = False
+    place = ("x", "y", "w", "h")
     if away_keys and home is None and isinstance(tile, dict):
-        placed = shared_monitors.away_layout(saved["layout"], own, peer, away_keys)
+        base = saved["layout"]
+        start = tile
+        if kept is not None and all_displays:
+            base = copy.deepcopy(saved["layout"])
+            base[own].update({key: kept[key] for key in place if key in kept})
+            base[own]["displays"] = _stored_displays(all_displays)
+            start = base[own]
+        placed = shared_monitors.away_layout(base, own, peer, away_keys)
         if placed is not None:
-            held["home"] = {key: copy.deepcopy(tile[key]) for key in ("x", "y", "w", "h", "display_offsets")
-                            if key in tile}
+            held["home"] = {key: copy.deepcopy(start[key]) for key in place + ("display_offsets",)
+                            if key in start}
             held["home"]["peer"] = peer
             saved["layout"] = placed
             moved = True
@@ -365,7 +379,17 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
         saved["layout"] = shared_monitors.home_layout(saved["layout"], own, home.get("peer", peer), home,
                                                       _stored_displays(own_displays))
         held.pop("home", None)
+        held["kept"] = copy.deepcopy(home)
         moved = True
+    elif not away_keys and kept is not None and isinstance(tile, dict) and all_displays and \
+            any(tile.get(key) != kept.get(key) for key in place):
+        if saved.get("layout_by") == own:
+            held["kept"] = dict({key: tile[key] for key in place if key in tile}, peer=kept.get("peer", peer))
+            saved[shared_monitors.SETTINGS_KEY] = held
+        else:
+            saved["layout"] = shared_monitors.home_layout(saved["layout"], own, kept.get("peer", peer), kept,
+                                                          _stored_displays(all_displays))
+            moved = True
     if moved:
         saved[shared_monitors.SETTINGS_KEY] = held
         _stamp(saved, time.time() if now is None else now)

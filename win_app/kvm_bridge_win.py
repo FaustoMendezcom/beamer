@@ -2160,9 +2160,11 @@ class WindowsApplication(QWidget):
             if self._window_settings_stale:
                 return False
             home = shared_monitors.state(settings)["home"]
-            if repair and home is None and not away:
+            kept = (settings.get(shared_monitors.SETTINGS_KEY) or {}).get("kept")
+            kept = kept if isinstance(kept, dict) else None
+            if repair and home is None and kept is None and not away:
                 return False
-            peer = next(iter(sorted(set(away.values()))), None) or (home or {}).get("peer")
+            peer = next(iter(sorted(set(away.values()))), None) or (home or kept or {}).get("peer")
             if peer is None:
                 return False
             outcome = crossing_state.shared_monitors_moved(

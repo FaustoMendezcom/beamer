@@ -17,6 +17,10 @@ POLL_SECONDS = 2.0
 FENCE_SECONDS = 0.25
 # A monitor takes a moment to change input and stop answering; read again after this.
 SETTLE_SECONDS = 1.5
+# Reads in a row a monitor must give before what it shows counts as changed. A monitor hunting for
+# a signal (the other PC shut down) answers and stops answering by turns, and each turn moved the
+# picture back and forth; a switch this PC makes or is told of counts at once.
+AGREEING_READS = 2
 
 
 class SharedMonitors:
@@ -41,6 +45,7 @@ class SharedMonitors:
         self._monitors = []                  # monitors_ddc.Monitor, identified ones only
         self._display_count = 0              # every display, identified or not
         self._showing: Dict[str, bool] = {}  # monitor id: whether it shows this PC
+        self._disagreeing: Dict[str, int] = {}  # monitor id: reads in a row against _showing
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -91,7 +96,15 @@ class SharedMonitors:
             self._display_count = len(every)
             learned = False
             for identity, code in readings.items():
-                self._showing[identity] = code is not None
+                here = code is not None
+                if identity not in self._showing or self._showing[identity] == here:
+                    self._showing[identity] = here
+                    self._disagreeing.pop(identity, None)
+                else:
+                    self._disagreeing[identity] = self._disagreeing.get(identity, 0) + 1
+                    if self._disagreeing[identity] >= AGREEING_READS:
+                        self._showing[identity] = here
+                        self._disagreeing.pop(identity, None)
                 if code is not None and self._codes.get(identity) != code:
                     self._codes[identity] = code
                     learned = True
@@ -239,6 +252,7 @@ class SharedMonitors:
             ids = {monitor["id"] for monitor in listed}
             for identity in ids:
                 self._showing[identity] = True
+                self._disagreeing.pop(identity, None)
             self._peers[peer] = [dict(item, showing=False) if item.get("id") in ids else item
                                  for item in self._peers.get(peer, [])]
         if ids:
@@ -264,6 +278,7 @@ class SharedMonitors:
                 gone = {monitor.edid_id for monitor, _code in targets if monitor.key in switched}
                 for identity in gone:
                     self._showing[identity] = False
+                    self._disagreeing.pop(identity, None)
                 # Until the peer's next `announce` says so itself: it now shows them.
                 self._peers[peer] = [dict(item, showing=True) if item.get("id") in gone else item
                                      for item in self._peers.get(peer, [])]

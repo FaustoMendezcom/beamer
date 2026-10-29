@@ -99,9 +99,24 @@ class SharedMonitorsTests(unittest.TestCase):
         self.announce()
         self.monitors.give(PC2)
         self.ddc.inputs[RIGHT.device] = self.ddc.inputs[LEFT.device] = 7
+        self.assertFalse(self.monitors.poll())
         self.assertTrue(self.monitors.poll())
         self.assertEqual(self.monitors.away(), {})
         self.assertEqual(self.desktop.away, [])
+
+    def test_a_monitor_answering_by_turns_moves_nothing(self):
+        # The other PC shut down: its monitors hunt for a signal, answering one read and not the next.
+        self.monitors.poll()
+        self.announce(showing=True)
+        self.assertEqual(self.monitors.away(), {})
+        for value in (8, 7, 8, 7, 8, 7):
+            self.ddc.inputs[RIGHT.device] = self.ddc.inputs[LEFT.device] = value
+            self.monitors.poll()
+            self.assertEqual(self.monitors.away(), {})
+        self.ddc.inputs[RIGHT.device] = self.ddc.inputs[LEFT.device] = 8
+        self.monitors.poll()
+        self.monitors.poll()
+        self.assertEqual(self.monitors.away(), {"0": PC2, "1": PC2})
 
     def test_monitors_asleep_answer_neither_machine_and_stay(self):
         self.monitors.poll()
@@ -115,6 +130,7 @@ class SharedMonitorsTests(unittest.TestCase):
         self.monitors.poll()
         self.announce(showing=False)
         self.ddc.inputs[RIGHT.device] = self.ddc.inputs[LEFT.device] = 8
+        self.monitors.poll()
         self.monitors.poll()
         self.assertEqual(self.monitors.away(), {})
         self.announce(showing=True)

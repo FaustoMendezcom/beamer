@@ -205,6 +205,41 @@ class PictureTests(unittest.TestCase):
                                                     own_displays=None, now=400, all_displays=PC1_DISPLAYS)
         self.assertFalse(again["send_picture"])
 
+    def test_home_keeps_its_place_against_a_peers_stale_picture_and_leaves_from_it(self):
+        away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                   own_displays=None, now=200)["settings"]
+        back = crossing_state.shared_monitors_moved(away, platform="pc", peer=PC2, away_keys=[],
+                                                   own_displays=PC1_DISPLAYS, now=300)["settings"]
+        self.assertEqual({key: back["shared_monitors"]["kept"][key] for key in "xywh"},
+                         {"x": 2, "y": -90, "w": 430, "h": 180})
+        # PC2's picture, built while the monitors were away, arrives stamped later: PC1 in its away place.
+        shrunk = dict(back, layout_by=PC2, layout_set_at=back["layout_set_at"] + 1,
+                      layout={**back["layout"], PC1: {**back["layout"][PC1], "x": 217, "w": 215, "h": 90}})
+        fixed = crossing_state.shared_monitors_moved(shrunk, platform="pc", peer=PC2, away_keys=[],
+                                                    own_displays=PC1_DISPLAYS, now=400, all_displays=PC1_DISPLAYS)
+        self.assertTrue(fixed["send_picture"])
+        self.assertEqual({key: fixed["settings"]["layout"][PC1][key] for key in "xywh"},
+                         {"x": 2, "y": -90, "w": 430, "h": 180})
+        self.assertIn((MAC, "edge", "2", "left"), self.zones(fixed["settings"]))
+        # Going away again starts from the kept place, not from a shrunk tile.
+        leave = crossing_state.shared_monitors_moved(shrunk, platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                    own_displays=None, now=500, all_displays=PC1_DISPLAYS)
+        self.assertEqual(leave["settings"]["shared_monitors"]["home"]["w"], 430)
+        self.assertEqual({key: leave["settings"]["layout"][PC1][key] for key in "xywh"},
+                         {"x": 217, "y": -90, "w": 215, "h": 90})
+
+    def test_moving_its_own_tile_here_becomes_the_kept_place(self):
+        away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                   own_displays=None, now=200)["settings"]
+        back = crossing_state.shared_monitors_moved(away, platform="pc", peer=PC2, away_keys=[],
+                                                   own_displays=PC1_DISPLAYS, now=300)["settings"]
+        dragged = dict(back, layout={**back["layout"], PC1: {**back["layout"][PC1], "y": -60}})
+        out = crossing_state.shared_monitors_moved(dragged, platform="pc", peer=PC2, away_keys=[],
+                                                  own_displays=PC1_DISPLAYS, now=400, all_displays=PC1_DISPLAYS)
+        self.assertFalse(out["send_picture"])
+        self.assertEqual(out["settings"]["layout"][PC1]["y"], -60)
+        self.assertEqual(out["settings"]["shared_monitors"]["kept"]["y"], -60)
+
     def test_going_away_twice_keeps_the_first_home(self):
         held = self.settings()
         once = crossing_state.shared_monitors_moved(held, platform="pc", peer=PC2, away_keys=["0", "1"],
