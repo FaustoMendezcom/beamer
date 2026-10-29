@@ -111,6 +111,13 @@ the driving machine as at the PC's own keyboard, and no credentials are stored a
 - **What it adds to the attack surface**: the link's handshake and input parsing, now also as
   SYSTEM. It is the same authenticated, encrypted link (ChaCha20-Poly1305, per-pairing keys) the
   app uses, so an unpaired host gets no further than the handshake.
+- **Ended as a whole.** Each process the service starts is in its own kill-on-close job, and
+  stopping it ends the job: the exe is PyInstaller's launcher with the program as its child, and
+  ending the launcher alone once left a receiver holding the port after sign-in. The receiver also
+  ends itself within a second of a user name appearing on its session.
+- **Then the user's own Beamer.** For the standard account the installer named, the service starts
+  that account's Beamer.exe once per sign-in, as the account (WTSQueryUserToken), unelevated, once
+  Explorer runs and unless Beamer already does: a Beamer copied in by hand has no sign-in task.
 - `-NoSignInScreen` leaves it out; `-Remove` takes away the folder and the firewall rule.
 
 ## Testing plan (needs the user, as administrator)

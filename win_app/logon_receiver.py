@@ -24,6 +24,7 @@ SETTINGS_NAME = "settings.json"
 # link's own control messages need none.
 CAPS: list = []
 DPI_AWARENESS_PER_MONITOR_V2 = -4
+SIGNED_IN_CHECK_SECONDS = 1.0
 
 
 def settings_path(exe: Optional[str] = None) -> str:
@@ -103,6 +104,25 @@ def _announce_forever(own: dict) -> None:
                 continue
 
 
+def _leave_once_someone_signs_in() -> None:
+    """Ends this process the moment a user name appears on its session, whatever the service does:
+    that user's own Beamer is about to take the port, and input here would go to a desktop no
+    longer shown."""
+    import win32ts
+
+    session = ctypes.c_ulong()
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session))
+    stop = threading.Event()
+    while not stop.wait(SIGNED_IN_CHECK_SECONDS):
+        try:
+            if win32ts.WTSQuerySessionInformation(None, session.value, win32ts.WTSUserName):
+                LOGGER.info("Someone signed in to session %s; the sign-in screen receiver ends", session.value)
+                logging.shutdown()
+                os._exit(0)
+        except Exception:
+            LOGGER.exception("Could not tell whether anyone signed in")
+
+
 def _version() -> str:
     from pathlib import Path
 
@@ -146,5 +166,6 @@ def main() -> int:
     LOGGER.info("Sign-in screen receiver for %s, %d pairings", own["name"], len(settings["peers"]))
     server.start(own["port"])
     threading.Thread(target=_announce_forever, args=(own,), name="Beamer-logon-beacon", daemon=True).start()
+    threading.Thread(target=_leave_once_someone_signs_in, name="Beamer-logon-watch", daemon=True).start()
     threading.Event().wait()
     return 0

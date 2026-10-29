@@ -124,33 +124,34 @@ def launch_in(session: int, argument: str, desktop: str):
         win32con.CREATE_NO_WINDOW | win32process.CREATE_UNICODE_ENVIRONMENT | win32process.CREATE_SUSPENDED,
         environment, None, startup)
     try:
-        _HELPERS.assign(process)
+        job = _kill_on_close_job()
+        import win32job
+
+        win32job.AssignProcessToJobObject(job, process)
     finally:
         win32process.ResumeThread(thread)
         thread.Close()
-    return process
+    return Launched(process, job)
 
 
-class _Job:
-    """A job that ends every helper when the service's handle to it closes, the service crashing
-    included, so no orphaned helper keeps the pipe."""
+class Launched:
+    """A process the service started and the job holding it and everything it starts: the exe is
+    PyInstaller's launcher, which runs the program as a child, so ending the launcher alone left
+    the program running (a sign-in screen receiver holding the port after sign-in). The job is
+    kill-on-close, so the service ending, by a crash included, ends them too."""
 
-    def __init__(self):
-        self._job = None
-
-    def assign(self, process) -> None:
-        import win32job
-
-        if self._job is None:
-            job = win32job.CreateJobObject(None, "")
-            limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
-            limits["BasicLimitInformation"]["LimitFlags"] |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-            win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
-            self._job = job
-        win32job.AssignProcessToJobObject(self._job, process)
+    def __init__(self, process, job):
+        self.process, self.job = process, job
 
 
-_HELPERS = _Job()
+def _kill_on_close_job():
+    import win32job
+
+    job = win32job.CreateJobObject(None, "")
+    limits = win32job.QueryInformationJobObject(job, win32job.JobObjectExtendedLimitInformation)
+    limits["BasicLimitInformation"]["LimitFlags"] |= JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    win32job.SetInformationJobObject(job, win32job.JobObjectExtendedLimitInformation, limits)
+    return job
 
 
 def send_sas() -> None:
@@ -182,20 +183,114 @@ def sas_event():
     return event
 
 
-def process_alive(process) -> bool:
+def process_alive(launched) -> bool:
     import win32con
     import win32event
 
-    return win32event.WaitForSingleObject(process, 0) == win32con.WAIT_TIMEOUT
+    return win32event.WaitForSingleObject(launched.process, 0) == win32con.WAIT_TIMEOUT
 
 
-def stop_process(process) -> None:
-    import win32process
+def stop_process(launched) -> None:
+    """Ends the launched process and every process it started."""
+    import win32job
 
     try:
-        win32process.TerminateProcess(process, 0)
+        win32job.TerminateJobObject(launched.job, 0)
+    except Exception:
+        LOGGER.exception("Could not end a process the service started")
+    try:
+        launched.job.Close()
     except Exception:
         pass
+
+
+# -- The signed-in standard user's own Beamer --------------------------------------------------
+
+class UserStart:
+    """Starts the named standard account's own Beamer once each time it signs in to the console, as
+    that account and unelevated, as ShareMouse's service does: a Beamer copied in by hand has no
+    sign-in task of its own. Once per sign-in, so a Beamer the user quits stays quit. Waits for
+    the desktop (Explorer) to be there, and skips a sign-in where Beamer already runs."""
+
+    def __init__(self, session, user_of, wanted_user, ready, running, launch):
+        self._session, self._user_of, self._wanted_user = session, user_of, wanted_user
+        self._ready, self._running, self._launch = ready, running, launch
+        self._done_for = None
+
+    def check(self) -> None:
+        session = self._session()
+        user = self._user_of(session) if session not in (None, NO_SESSION, 0) else None
+        wanted = self._wanted_user()
+        if not user or not wanted or user != wanted:
+            self._done_for = None
+            return
+        if self._done_for == (session, user) or not self._ready(session):
+            return
+        self._done_for = (session, user)
+        if self._running(session):
+            return
+        try:
+            self._launch(session)
+            LOGGER.info("Started the signed-in user's Beamer in session %s", session)
+        except Exception:
+            LOGGER.exception("Could not start the signed-in user's Beamer in session %s", session)
+
+
+def session_user_sid(session: int) -> Optional[str]:
+    import win32security
+    import win32ts
+
+    try:
+        name = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSUserName)
+        if not name:
+            return None
+        domain = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSDomainName)
+        return win32security.ConvertSidToStringSid(win32security.LookupAccountName(domain or None, name)[0])
+    except Exception:
+        LOGGER.exception("Could not tell who is signed in to session %s", session)
+        return None
+
+
+def _processes_in(session: int) -> list:
+    import win32ts
+
+    return [str(name).lower() for in_session, _pid, name, _sid in win32ts.WTSEnumerateProcesses(None, 1, 0)
+            if in_session == session]
+
+
+def desktop_ready(session: int) -> bool:
+    return "explorer.exe" in _processes_in(session)
+
+
+def beamer_running(session: int) -> bool:
+    return "beamer.exe" in _processes_in(session)
+
+
+def launch_user_beamer(session: int) -> None:
+    """The installer's allowed Beamer.exe as the session's own user, with that user's token and
+    environment, on its default desktop: exactly what signing in and starting it would run."""
+    import win32con
+    import win32process
+    import win32profile
+    import win32ts
+
+    import secure_helper
+
+    exe = secure_helper.allowed_client()
+    if not exe or not os.path.isfile(exe):
+        raise OSError(f"no allowed Beamer.exe ({exe})")
+    token = win32ts.WTSQueryUserToken(session)
+    try:
+        environment = win32profile.CreateEnvironmentBlock(token, False)
+        startup = win32process.STARTUPINFO()
+        startup.lpDesktop = "winsta0\\default"
+        process, thread, _pid, _tid = win32process.CreateProcessAsUser(
+            token, exe, f'"{exe}"', None, None, False, win32process.CREATE_UNICODE_ENVIRONMENT,
+            environment, os.path.dirname(exe), startup)
+        process.Close()
+        thread.Close()
+    finally:
+        token.Close()
 
 
 def log_folder() -> Optional[str]:
@@ -262,11 +357,16 @@ def run_service() -> None:
             sign_in = Supervisor(console_session, launch_logon_receiver, process_alive, stop_process,
                                  wanted=lambda session: logon_receiver.installed() and not signed_in(session),
                                  name="Sign-in screen receiver")
+            import secure_helper
+
+            user_start = UserStart(console_session, session_user_sid, secure_helper.standard_user,
+                                   desktop_ready, beamer_running, launch_user_beamer)
             sas = sas_event()
             waits = [self.stop_event] + ([sas] if sas is not None else [])
             LOGGER.info("%s running", SERVICE_NAME)
             supervisor.check()
             sign_in.check()
+            user_start.check()
             while True:
                 woke = win32event.WaitForMultipleObjects(waits, False, int(CHECK_SECONDS * 1000))
                 if woke == win32event.WAIT_OBJECT_0:
@@ -276,6 +376,7 @@ def run_service() -> None:
                     continue
                 supervisor.check()
                 sign_in.check()
+                user_start.check()
             sign_in.shutdown()
             supervisor.shutdown()
             LOGGER.info("%s stopped", SERVICE_NAME)

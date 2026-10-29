@@ -179,6 +179,8 @@ FULL_SCREEN_CHECK_MS = 1000
 # (the peer's screens were off) to have gone back, and for the peer's screens to have woken.
 BOUNCE_CHECK_MS = 5000
 # Switching to a peer waits this long at most for its `awake`, then switches anyway (an older build).
+# How long a Switch computer that woke the other PC still switches once that PC links.
+WAKE_SWITCH_SECONDS = 300
 AWAKE_WAIT_MS = 3500
 # A peer with input this recently has its screens on; else it wakes them and answers after SCREENS_ON_MS,
 # the time a monitor's signal takes to come back.
@@ -2229,6 +2231,9 @@ class WindowsApplication(QWidget):
             asleep = next((ident for ident in sorted(shared) if protocol.read_id(ident) is not None), None)
             if asleep is not None and self.sender.wake(protocol.read_id(asleep)):
                 LOGGER.info("Switch computer: %s is not connected; waking it", self._label_of(protocol.read_id(asleep)))
+                # A PC starting from off takes minutes, longer than the wake's own wait: the switch
+                # goes on once it links, the sign-in screen's receiver included.
+                self._switch_after_wake = (asleep, time.monotonic() + WAKE_SWITCH_SECONDS)
                 return
             self._on_alert(tr("Beamer"), tr("No monitor is shared with a connected PC. Run Beamer on the other "
                                             "PC wired to these monitors and pair it with this one."))
@@ -5850,6 +5855,12 @@ class WindowsApplication(QWidget):
         self._pull_peer_fields()
         self._keep_monitor_peers()
         linked = {protocol.id_text(peer) for peer in self._peer_caps()}
+        pending = getattr(self, "_switch_after_wake", None)
+        if pending is not None and (pending[0] in linked or time.monotonic() > pending[1]):
+            self._switch_after_wake = None
+            if pending[0] in linked and time.monotonic() <= pending[1]:
+                LOGGER.info("Switch computer: %s is up after waking; switching", self._label_of(protocol.read_id(pending[0])))
+                QTimer.singleShot(0, self.switch_computer)
         self._profile_last_heard = {peer: heard for peer, heard in self._profile_last_heard.items() if peer in linked}
         for peer in linked:
             self._profile_last_heard.setdefault(peer, time.time())

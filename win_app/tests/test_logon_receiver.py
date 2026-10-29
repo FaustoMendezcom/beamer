@@ -103,6 +103,53 @@ class WhenItRunsTests(unittest.TestCase):
         self.assertEqual(launched, [1])
 
 
+class UserStartTests(unittest.TestCase):
+    """The service starts the named standard account's Beamer once per sign-in, as that account."""
+
+    WORKER = "S-1-5-21-1-2-3-1001"
+
+    def make(self, user, wanted=WORKER, ready=True, running=False):
+        self.state = {"user": user, "ready": ready, "running": running, "session": 1}
+        self.launched = []
+        return secure_service.UserStart(
+            lambda: self.state["session"], lambda session: self.state["user"], lambda: wanted,
+            lambda session: self.state["ready"], lambda session: self.state["running"], self.launched.append)
+
+    def test_once_per_sign_in_after_the_desktop_is_up(self):
+        start = self.make(None, ready=False)
+        start.check()
+        self.state["user"] = self.WORKER
+        start.check()
+        self.assertEqual(self.launched, [])
+        self.state["ready"] = True
+        start.check()
+        start.check()
+        self.assertEqual(self.launched, [1])
+        # Quit by the user: not started again until the next sign-in.
+        self.state["user"] = None
+        start.check()
+        self.state["user"] = self.WORKER
+        start.check()
+        self.assertEqual(self.launched, [1, 1])
+
+    def test_not_for_another_account_none_named_or_beamer_already_running(self):
+        for start in (self.make("S-1-5-21-1-2-3-500"), self.make(self.WORKER, wanted=None),
+                      self.make(self.WORKER, running=True)):
+            start.check()
+        self.assertEqual(self.launched, [])
+
+
+class StopsTheWholeTreeTests(unittest.TestCase):
+    def test_stopping_ends_the_job_not_just_the_launcher(self):
+        from unittest import mock
+
+        ended, closed = [], []
+        job = mock.Mock(Close=lambda: closed.append(1))
+        with mock.patch.dict(sys.modules, {"win32job": mock.Mock(TerminateJobObject=lambda j, code: ended.append(j))}):
+            secure_service.stop_process(secure_service.Launched(object(), job))
+        self.assertEqual((ended, closed), ([job], [1]))
+
+
 @unittest.skipUnless(sys.platform == "win32", "Windows")
 class ListensTests(unittest.TestCase):
     def test_the_responder_runs_without_the_app(self):

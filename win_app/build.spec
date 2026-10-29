@@ -21,7 +21,7 @@ analysis = Analysis(
     hiddenimports=["nacl", "_cffi_backend", "segno", "win32com.client", "pythoncom", "pywintypes",
                    # The secure desktop service and helper (docs/secure-desktop.md).
                    "servicemanager", "win32timezone", "win32service", "win32serviceutil", "win32event",
-                   "win32pipe", "win32file", "win32security", "win32process", "win32api", "win32job", "win32ts"] + app_modules + core_modules,
+                   "win32pipe", "win32file", "win32security", "win32process", "win32api", "win32job", "win32ts", "win32profile"] + app_modules + core_modules,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
