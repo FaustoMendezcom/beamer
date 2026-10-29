@@ -19,7 +19,7 @@ import theme
 from core import updates
 
 
-FOUND = updates.Release("1.5.11", "https://github.com/kalkman-code/beamer/releases/tag/v1.5.11")
+FOUND = updates.Release("1.5.11", "https://github.com/FaustoMendezcom/beamer/releases/tag/v1.5.11")
 
 
 class UpdateNoticeTest(unittest.TestCase):

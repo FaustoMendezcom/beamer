@@ -14,8 +14,11 @@ import sys
 import threading
 from typing import NamedTuple
 
-LATEST_URL = "https://api.github.com/repos/kalkman-code/beamer/releases/latest"
-RELEASES_PAGE = "https://github.com/kalkman-code/beamer/releases/latest"
+# This fork's own releases: the original project's would offer builds without this fork's changes.
+REPOSITORY = "FaustoMendezcom/beamer"
+REPOSITORY_PAGE = f"https://github.com/{REPOSITORY}/"
+LATEST_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+RELEASES_PAGE = f"{REPOSITORY_PAGE}releases/latest"
 CHECK_EVERY_SECONDS = 24 * 60 * 60
 TIMEOUT_SECONDS = 10.0
 MAX_BYTES = 256 * 1024
@@ -61,7 +64,7 @@ def newer_release(current, payload):
     if theirs < ours or (theirs == ours and not beta):
         return None
     url = payload.get("html_url")
-    if not isinstance(url, str) or not url.startswith("https://github.com/kalkman-code/beamer/"):
+    if not isinstance(url, str) or not url.startswith(REPOSITORY_PAGE):
         url = RELEASES_PAGE
     body = payload.get("body")
     important = isinstance(body, str) and any(
@@ -80,7 +83,7 @@ def visible_notice(found, enabled, dismissed, requested=False):
 
 def _portable_download(version, payload):
     name = f"Beamer-Portable-{version}-windows-x64.zip"
-    url = f"https://github.com/kalkman-code/beamer/releases/download/v{version}/{name}"
+    url = f"{REPOSITORY_PAGE}releases/download/v{version}/{name}"
     assets = payload.get("assets")
     if isinstance(assets, list):
         for asset in assets:

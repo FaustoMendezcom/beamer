@@ -26,8 +26,8 @@ from core.tests import responder_harness as h
 
 PASSWORD = 'Synthetic portable passphrase'
 VERSION = '1.5.11'
-PAGE = 'https://github.com/kalkman-code/beamer/releases/tag/v1.5.11'
-DOWNLOAD = ('https://github.com/kalkman-code/beamer/releases/download/v1.5.11/'
+PAGE = 'https://github.com/FaustoMendezcom/beamer/releases/tag/v1.5.11'
+DOWNLOAD = ('https://github.com/FaustoMendezcom/beamer/releases/download/v1.5.11/'
             'Beamer-Portable-1.5.11-windows-x64.zip')
 
 
