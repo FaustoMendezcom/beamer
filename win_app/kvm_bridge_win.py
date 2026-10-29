@@ -5864,7 +5864,8 @@ class WindowsApplication(QWidget):
         if portable_runtime.enabled() or self._input_controller_blocked or not getattr(desktop_win, "CAN_HIDE_POINTER", False):
             return None
         try:
-            desktop_win.restore_pointer()
+            # Always: a run as another account left its marker in that account's folder.
+            desktop_win.restore_pointer(always=True)
         except Exception:
             LOGGER.exception("Could not give back a pointer an earlier run left hidden")
         return idle_pointer.IdlePointer(

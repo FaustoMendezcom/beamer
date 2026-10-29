@@ -457,12 +457,14 @@ def show_pointer(reason: str) -> None:
             _restore_pointer()
 
 
-def restore_pointer() -> None:
-    """Give back a pointer a previous run hid and never showed, and every hide on the way out."""
+def restore_pointer(always: bool = False) -> None:
+    """Give back a pointer a previous run hid and never showed, and every hide on the way out.
+    `always` at start: the blank cursors are the session's, so a Beamer that ran as another account
+    (elevated with an administrator's credentials) left its marker in that account's folder."""
     _require()
     with _pointer_lock:
         marker = _pointer_marker()
-        if _pointer_hidden_for or (marker and os.path.exists(marker)):
+        if always or _pointer_hidden_for or (marker and os.path.exists(marker)):
             _pointer_hidden_for.clear()
             _restore_pointer()
 

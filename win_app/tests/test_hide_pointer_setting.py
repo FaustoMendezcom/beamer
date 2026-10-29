@@ -28,7 +28,7 @@ class RecordingDesktop:
     def show_pointer(self, reason):
         self.calls.append(("show", reason))
 
-    def restore_pointer(self):
+    def restore_pointer(self, always=False):
         self.calls.append(("restore",))
 
     def set_click_through(self, hwnd, through):
