@@ -706,6 +706,9 @@ class WindowsApplication(QWidget):
         self.sender.send_peer_home = self.server.send_home
         # A Mac on Same positions sends Command as the Windows key; Command-C/V/X still copy, paste, cut.
         self.server.mac_shortcuts = OWN_PLATFORM == "windows"
+        # With the secure desktop helper installed, a locked PC keeps its owner's input.
+        if OWN_PLATFORM == "windows" and hasattr(platform_parts.injector, "secure_desktop_available"):
+            self.server.secure_desktop = platform_parts.injector.secure_desktop_available
         # Same on all machines, over either link: applied on the GUI thread, and announced with
         # this PC's own arrangement the moment a link comes up.
         self.sender.settings_callback = lambda peer, data: self.bridge.settings.emit(protocol.id_text(peer), data)

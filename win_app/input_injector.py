@@ -492,8 +492,9 @@ def inject_key(name: str, down: bool, us: Optional[str] = None) -> None:
             plan += [(vk, 0, KEYEVENTF_KEYUP) for vk in reversed(sequence)]
             _send_input(*(_keybd_input(vk, scan, flags) for vk, scan, flags in plan))
         return
-    if (lowered == "delete" and down and _mods_down & {"ctrl", "ctrl_r"} and _mods_down & {"alt", "alt_r"}
-            and _send_secure_attention()):
+    # A Mac's Delete key is Backspace: Control-Option-Delete there is Ctrl+Alt+Backspace here.
+    if (lowered in ("delete", "backspace") and down and _mods_down & {"ctrl", "ctrl_r"}
+            and _mods_down & {"alt", "alt_r"} and _send_secure_attention()):
         return
     if lowered in ("brightness_up", "brightness_down"):
         from brightness_worker import submit
@@ -514,6 +515,15 @@ def inject_key(name: str, down: bool, us: Optional[str] = None) -> None:
     if not plan:
         return
     _send_input(*(_keybd_input(vk, scan, flags) for vk, scan, flags in plan))
+
+
+def secure_desktop_available() -> bool:
+    """Whether the secure desktop helper will take this Beamer's input (docs/secure-desktop.md)."""
+    try:
+        return _secure().available()
+    except Exception:
+        LOGGER.exception("Could not ask the secure desktop helper")
+        return False
 
 
 def _send_secure_attention() -> bool:

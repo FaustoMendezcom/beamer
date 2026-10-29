@@ -105,6 +105,7 @@ class Client:
         self._lock = threading.Lock()
         self._handle = None
         self._failed_at = None
+        self._checked = None   # (when, whether the helper answered a ping)
         self.refused = ""
 
     def _connect(self):
@@ -140,6 +141,15 @@ class Client:
                 self._close_locked()
                 self._failed_at = self._clock()
             return status, text
+
+    def available(self) -> bool:
+        """Whether a helper is installed and lets this Beamer use it, asked at most every
+        RETRY_SECONDS: the receiver keeps a locked machine's input when it is."""
+        if self._checked is not None and self._clock() - self._checked[0] < RETRY_SECONDS:
+            return self._checked[1]
+        answered = self.request(PING)[0] == OK
+        self._checked = (self._clock(), answered)
+        return answered
 
     def send_inputs(self, records: bytes, size: int) -> bool:
         return self.request(INPUTS, inputs_payload(records, size))[0] == OK

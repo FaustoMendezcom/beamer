@@ -181,5 +181,64 @@ class InjectorRoutingTests(unittest.TestCase):
         typed.assert_not_called()
 
 
+class LockedMachineTests(unittest.TestCase):
+    """With the helper installed a locked PC keeps its owner's input, to type the password; without
+    it, it sends the input home and asks the unlock provider, as before."""
+
+    LINK = __import__("types").SimpleNamespace(name="Mac")
+
+    def responder(self, secure):
+        import threading
+        import types
+        from core import receiver
+
+        fake = types.SimpleNamespace(
+            _unlock=mock.Mock(is_locked=mock.Mock(return_value=True)), _unlocking=threading.Event(),
+            secure_desktop=lambda: secure, _owner=self.LINK, _arriving_visit=None, _lock_checked_at=0.0,
+            _locked_since=-100.0, _sent_home_for_lock=False, _send_home=mock.Mock(return_value=True),
+            _set_status=mock.Mock())
+        fake._types_on_secure_desktop = types.MethodType(receiver.LinkResponder._types_on_secure_desktop, fake)
+        return fake, receiver.LinkResponder
+
+    def test_with_the_helper_the_input_stays_and_no_unlock_is_asked(self):
+        fake, cls = self.responder(True)
+        cls._home_if_locked(fake, self.LINK)
+        cls._begin_unlock(fake, self.LINK)
+        fake._send_home.assert_not_called()
+        self.assertFalse(fake._unlocking.is_set())
+
+    def test_without_it_the_input_goes_home_as_before(self):
+        fake, cls = self.responder(False)
+        cls._home_if_locked(fake, self.LINK)
+        fake._send_home.assert_called_once_with(self.LINK)
+
+    def test_a_macs_delete_key_sends_ctrl_alt_del_too(self):
+        helper = mock.Mock(sas=mock.Mock(return_value=True))
+        with mock.patch.object(input_injector, "_secure", return_value=helper),                 mock.patch.object(input_injector, "_send_input") as typed,                 mock.patch.object(input_injector, "_mods_down", {"ctrl", "alt"}):
+            input_injector.inject_key("backspace", True)
+        helper.sas.assert_called_once()
+        typed.assert_not_called()
+
+    def test_availability_is_asked_at_most_every_few_seconds(self):
+        asked, now = [], [0.0]
+
+        class Pipe:
+            def write(self, data):
+                asked.append(data)
+
+            def read(self, count):
+                return secure_input.answer(secure_input.OK, "Default")[:count] if count == 2 else b"Default"[:count]
+
+            def close(self):
+                pass
+
+        client = secure_input.Client(1, opener=lambda name: Pipe(), clock=lambda: now[0])
+        self.assertTrue(client.available())
+        self.assertTrue(client.available())
+        now[0] = secure_input.RETRY_SECONDS + 1
+        self.assertTrue(client.available())
+        self.assertEqual(len(asked), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

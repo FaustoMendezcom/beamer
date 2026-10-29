@@ -585,6 +585,9 @@ class LinkResponder:
         self.key_watch: Optional[Callable[[str, bool], bool]] = None
         # A Windows receiver driven from a Mac: Command-C/V/X copy, paste and cut (core.mac_shortcuts).
         self.mac_shortcuts = False
+        # Whether input can reach this machine's secure desktop (a SYSTEM helper takes it): then a
+        # locked machine keeps its owner's input, to type the password, instead of sending it home.
+        self.secure_desktop: Callable[[], bool] = lambda: False
         # Told each button the owner presses or lets go here, after it is injected: (name, down).
         self.button_watch: Optional[Callable[[str, bool], None]] = None
         # Serves a peer's data connection (_DataRequest), on that connection's thread; None refuses.
@@ -2053,7 +2056,7 @@ class LinkResponder:
 
     def _begin_unlock(self, link: _Link) -> None:
         unlock = self._unlock
-        if unlock is None or self._unlocking.is_set():
+        if unlock is None or self._unlocking.is_set() or self._types_on_secure_desktop():
             return
         try:
             if unlock.is_locked() is not True:
@@ -2085,7 +2088,7 @@ class LinkResponder:
         """An owner left driving a machine on its lock screen is sent home,
         once per visit, after two checks LOCK_CHECK_SECONDS apart, and never while an unlock is in
         flight or the owner is arriving."""
-        if self._unlock is None or self._owner is not link:
+        if self._unlock is None or self._owner is not link or self._types_on_secure_desktop():
             return
         if self._unlocking.is_set() or self._arriving_visit is not None:
             self._locked_since = None
@@ -2107,6 +2110,14 @@ class LinkResponder:
         if not self._sent_home_for_lock:
             LOGGER.info("This machine is locked while %s drives it; sending its input home", link.name)
             self._sent_home_for_lock = self._send_home(link)
+
+    def _types_on_secure_desktop(self) -> bool:
+        check = getattr(self, "secure_desktop", None)
+        try:
+            return bool(check()) if check is not None else False
+        except Exception:
+            LOGGER.exception("Could not tell whether input reaches the secure desktop")
+            return False
 
     # Plumbing
 
