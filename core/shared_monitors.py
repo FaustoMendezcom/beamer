@@ -57,7 +57,8 @@ class ChordWatch:
 
 
 def state(settings: dict) -> dict:
-    """This machine's shared-monitor record: `codes` {monitor id: own input code}, `peers`
+    """This machine's shared-monitor record: `host` and `host_since` (its claim to keep the shared
+    monitors' place, and when it was made), `codes` {monitor id: own input code}, `peers`
     {peer id: [announced monitors]}, `key` (the chord or ""), `away` {monitor id: peer id}
     while a monitor shows that peer, and `home` (the tiles to restore)."""
     held = settings.get(SETTINGS_KEY)
@@ -67,7 +68,10 @@ def state(settings: dict) -> dict:
     away = held.get("away") if isinstance(held.get("away"), dict) else {}
     key = held.get("key") if isinstance(held.get("key"), str) and ways.valid_jump_key(held.get("key")) else ""
     home = held.get("home") if isinstance(held.get("home"), dict) else None
-    return {"codes": {k: v for k, v in codes.items() if isinstance(k, str) and type(v) is int and 1 <= v <= 255},
+    since = held.get("host_since")
+    return {"host": held.get("host") is True,
+            "host_since": since if type(since) is int and since > 0 else 0,
+            "codes": {k: v for k, v in codes.items() if isinstance(k, str) and type(v) is int and 1 <= v <= 255},
             "peers": {k: [m for m in v if isinstance(m, dict)] for k, v in peers.items()
                       if isinstance(k, str) and isinstance(v, list)},
             "away": {k: v for k, v in away.items() if isinstance(k, str) and isinstance(v, str)},

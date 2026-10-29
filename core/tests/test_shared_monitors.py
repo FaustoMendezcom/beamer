@@ -126,6 +126,9 @@ class SharedWithTests(unittest.TestCase):
         self.assertEqual(held["key"], "")
         self.assertEqual(set(held["peers"]), {PC2})
         self.assertIsNone(held["home"])
+        self.assertEqual((held["host"], held["host_since"]), (False, 0))
+        claimed = shared_monitors.state({"shared_monitors": {"host": True, "host_since": 1}})
+        self.assertEqual((claimed["host"], claimed["host_since"]), (True, 1))
 
 
 class PictureTests(unittest.TestCase):
