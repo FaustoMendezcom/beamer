@@ -187,7 +187,7 @@ def wait_for(predicate, timeout=3.0):
 class Machine:
     """A responder listening on loopback, with fakes at every platform edge."""
 
-    def __init__(self, peers, zones=(), caps=CAPS, away=False, desktop=None, notch_span=None, own=HERE, name="Here", unlock=None, hardware=None, hw=None, identify_callback=None):
+    def __init__(self, peers, zones=(), caps=CAPS, away=False, desktop=None, notch_span=None, own=HERE, name="Here", unlock=None, hardware=None, hw=None, identify_callback=None, monitors_callback=None):
         self.own = own
         self.settings = Settings(peers, zones, own)
         self.book = receiver.PeerBook(self.settings.load, self.settings.save)
@@ -223,6 +223,7 @@ class Machine:
             arrangement_callback=lambda peer, read: self.arrangements.append((peer, read)),
             settings_callback=lambda peer, data: self.settings_seen.append((peer, data)),
             identify_callback=identify_callback,
+            monitors_callback=monitors_callback,
             paired_callback=lambda peer, ids: self.paired.append((peer, ids)),
             link_callback=lambda peer, up: self.links.append((peer, up)),
             announce=lambda peer: list(self.announcements.get(peer, [])),

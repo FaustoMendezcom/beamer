@@ -4492,6 +4492,14 @@ msgid "On Wayland the desktop lets input go to another machine only when the poi
 msgstr "Su Wayland il desktop lascia passare l'input a un altro computer solo quando il puntatore spinge attraverso un bordo, quindi questo pulsante non può inviarlo."
 
 #: win_app/kvm_bridge_win.py
+msgid "Switch computer"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "Switch computer shortcut"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Hold this PC's edges while an app on it is full screen"
 msgstr "Blocca i bordi di questo PC mentre un'app è a schermo intero"
 
@@ -4514,6 +4522,10 @@ msgstr "Controlla le finestre con privilegi di amministratore"
 #: win_app/kvm_bridge_win.py
 msgid "Waiting for Windows permission…"
 msgstr "In attesa dell'autorizzazione di Windows…"
+
+#: win_app/kvm_bridge_win.py
+msgid "showing this PC"
+msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "At sign-in"
@@ -4718,6 +4730,10 @@ msgid "Beamer will run as administrator on this PC. Changing this restarts Beame
 msgstr "Beamer verrà eseguito come amministratore su questo PC. La modifica riavvia Beamer; Windows potrebbe chiedere l'autorizzazione."
 
 #: win_app/kvm_bridge_win.py
+msgid "No monitor is shared with a connected PC. Run Beamer on the other PC wired to these monitors and pair it with this one."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Start at sign-in needs Beamer to run as the signed-in account."
 msgstr "Per avviarsi all'accesso, Beamer deve essere eseguito con l'account attualmente connesso."
 
@@ -4807,6 +4823,16 @@ msgstr "Questo desktop non ha un'area di notifica, quindi la finestra di Beamer 
 #: win_app/kvm_bridge_win.py
 msgid "Update through your software store, or download the Flatpak from the release page and open it."
 msgstr "Aggiorna tramite il tuo negozio di software oppure scarica il file Flatpak dalla pagina della versione e aprilo."
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "showing {name}"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "{count} monitors shared with {name}, {where}."
+msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "Seam crossings need X11 on Linux."
@@ -4949,6 +4975,11 @@ msgstr "Beamer — {status}: {detail}"
 #, python-brace-format
 msgid "Could not save this PC's name: {error}"
 msgstr "Impossibile salvare il nome di questo PC: {error}"
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "The monitors did not switch to {name}."
+msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "When enabled, Beamer starts in the tray as administrator."

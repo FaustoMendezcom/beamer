@@ -32,6 +32,7 @@ if _IS_WINDOWS:
     MONITORENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(RECT), ctypes.c_ssize_t)
     user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
     user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+    user32.ClipCursor.argtypes = [ctypes.c_void_p]
     user32.EnumDisplayMonitors.argtypes = [ctypes.c_void_p, ctypes.c_void_p, MONITORENUMPROC, ctypes.c_ssize_t]
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
@@ -71,7 +72,13 @@ def _require() -> None:
         raise RuntimeError("Win32 desktop geometry is only available on Windows")
 
 
-def monitors() -> List[Rect]:
+# Shared monitors showing another machine (shared_monitors_win): still attached, so Windows
+# keeps them on the desktop, but no longer this machine's to use. Held as their rectangles,
+# and left out of `monitors` and `display_map` so edges and zones see the desktop as it shows.
+_away: frozenset = frozenset()
+
+
+def _all_monitors() -> List[Rect]:
     _require()
     found: List[Rect] = []
 
@@ -85,8 +92,55 @@ def monitors() -> List[Rect]:
     return found
 
 
+def monitors() -> List[Rect]:
+    found = _all_monitors()
+    kept = [rect for rect in found if rect not in _away]
+    return kept or found
+
+
 def display_map() -> dict:
-    return {str(index): rect for index, rect in enumerate(monitors())}
+    """{key: rect}, keyed by enumeration order across every monitor, so hiding one does not
+    renumber the others the zones name."""
+    found = _all_monitors()
+    kept = {str(index): rect for index, rect in enumerate(found) if rect not in _away}
+    return kept or {str(index): rect for index, rect in enumerate(found)}
+
+
+def display_map_all() -> dict:
+    """`display_map` with the away monitors too: what a machine that does not move its own tile
+    for shared monitors puts in the picture."""
+    return {str(index): rect for index, rect in enumerate(_all_monitors())}
+
+
+def set_away(rects) -> None:
+    """Hides these monitor rectangles from `monitors` and `display_map`, and fences the pointer
+    off them (`fence`); empty shows every monitor again and lifts the fence."""
+    global _away
+    _away = frozenset(rects)
+    fence()
+
+
+def fence() -> None:
+    """Keeps the pointer on the monitors this machine shows: ClipCursor to their bounds when they
+    form one rectangle, released when nothing is away. Windows drops a clip when another window
+    takes the foreground, so the caller repeats this while monitors are away."""
+    if user32 is None:
+        return
+    if not _away:
+        user32.ClipCursor(None)
+        return
+    kept = [rect for rect in _all_monitors() if rect not in _away]
+    if not kept:
+        user32.ClipCursor(None)
+        return
+    left = min(rect.x for rect in kept)
+    top = min(rect.y for rect in kept)
+    right = max(rect.x + rect.width for rect in kept)
+    bottom = max(rect.y + rect.height for rect in kept)
+    if sum(rect.width * rect.height for rect in kept) != (right - left) * (bottom - top):
+        # Not one rectangle (an L of displays): a clip to the bounds would take in an away one.
+        return
+    user32.ClipCursor(ctypes.byref(RECT(left, top, right, bottom)))
 
 
 def cursor_position() -> Tuple[int, int]:

@@ -80,6 +80,7 @@ from core import idle_pointer
 from core import ignored
 import motion
 from core import pairing
+from core import shared_monitors
 from core import keytable
 from core import peerlist
 from core.pairing import PairingService, local_address_towards
@@ -339,6 +340,11 @@ class StatusBridge(QObject):
     # Either link, carrying a peer's Same on all machines state: (peer id, data).
     settings = Signal(str, object)
     identify = Signal(object)
+    # Shared monitors: what this PC knows changed; a peer's `monitors` (peer id, (action, monitors));
+    # the Switch computer shortcut was pressed.
+    monitors_changed = Signal()
+    monitors_message = Signal(str, object)
+    switch_computer = Signal()
     shook_home = Signal(object)
     alert = Signal(str, str)
     # (version, url) when a newer Beamer is out, else None.
@@ -586,6 +592,14 @@ class WindowsApplication(QWidget):
         self.bridge.arrangement.connect(self._on_arrangement)
         self.bridge.settings.connect(self._on_settings)
         self.bridge.identify.connect(self._on_identify_screens)
+        self.bridge.monitors_changed.connect(self._on_shared_monitors_changed)
+        self.bridge.monitors_message.connect(self._on_monitors_message)
+        self.bridge.switch_computer.connect(self.switch_computer)
+        self.shared_monitors = None
+        self._monitors_away = {}
+        self._monitors_announced = None
+        self._monitors_chord_hook = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
+        self._monitors_chord_driven = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
         self.identify_screens = IdentifyScreens(self)
         self.bridge.shook_home.connect(self._on_shake)
         self.bridge.update.connect(self._on_update)
@@ -638,6 +652,7 @@ class WindowsApplication(QWidget):
             ),
             settings_callback=lambda peer, data: self.bridge.settings.emit(protocol.id_text(peer), data),
             identify_callback=self._receive_identify_screens,
+            monitors_callback=lambda peer, read: self.bridge.monitors_message.emit(protocol.id_text(peer), read),
             paired_callback=self._store_paired,
             link_callback=lambda peer, up: self.bridge.peers_changed.emit(),
             announce=self._announce,
@@ -678,10 +693,13 @@ class WindowsApplication(QWidget):
         self.resistance_pressure_timer.setInterval(33)
         self.resistance_pressure_timer.timeout.connect(self._refresh_local_pressure)
         self.sender.send_peer_home = self.server.send_home
+        # A Mac on Same positions sends Command as the Windows key; Command-C/V/X still copy, paste, cut.
+        self.server.mac_shortcuts = OWN_PLATFORM == "windows"
         # Same on all machines, over either link: applied on the GUI thread, and announced with
         # this PC's own arrangement the moment a link comes up.
         self.sender.settings_callback = lambda peer, data: self.bridge.settings.emit(protocol.id_text(peer), data)
         self.sender.identify_callback = self._receive_identify_screens
+        self.sender.monitors_callback = lambda peer, read: self.bridge.monitors_message.emit(protocol.id_text(peer), read)
         self.sender.arrangement_callback = lambda peer, read: self.bridge.arrangement.emit(
             protocol.id_text(peer), read["edge"], read["set_at"], protocol.id_text(read["by"]), read.get("way_back"),
             protocol.id_text(read["way_back_by"]) if read.get("way_back_by") else None
@@ -1315,6 +1333,21 @@ class WindowsApplication(QWidget):
         self.send_hint = widgets.label("", "note", wrap=True)
         self.send_hint.setVisible(False)
         module.body.addWidget(self.send_hint)
+        # Shown once a peer announces a monitor this PC is also wired to (shared monitors).
+        self.monitors_group = QWidget()
+        monitors_layout = QVBoxLayout(self.monitors_group)
+        monitors_layout.setContentsMargins(0, 0, 0, 0)
+        self.monitors_button = widgets.ElidingActionButton(tr("Switch computer"))
+        self.monitors_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.monitors_button.clicked.connect(self.switch_computer)
+        monitors_layout.addWidget(self.monitors_button)
+        self.monitors_note = widgets.label("", "note", wrap=True)
+        monitors_layout.addWidget(self.monitors_note)
+        self.monitors_key = widgets.JumpKeyRecorder(self._record_monitors_key, self._arm_monitors_key)
+        self.monitors_key.setAccessibleName(tr("Switch computer shortcut"))
+        monitors_layout.addWidget(self.monitors_key)
+        self.monitors_group.setVisible(False)
+        module.body.addWidget(self.monitors_group)
         self.pause_button = QPushButton(tr("Pause crossing"))
         self.pause_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pause_button.clicked.connect(self.toggle_pause)
@@ -1903,6 +1936,205 @@ class WindowsApplication(QWidget):
             if "identify_screens" in caps:
                 self._send_to(peer, protocol.identify_screens_msg(display_numbers(tiles.get(protocol.id_text(peer)))))
 
+    # -- shared monitors (WIRE.md section 8) ------------------------------------------------
+
+    def _start_shared_monitors(self) -> None:
+        """Watches the monitors wired to this PC and a peer, on Windows only (DDC/CI)."""
+        if OWN_PLATFORM != "windows" or portable_runtime.enabled():
+            return
+        import monitors_ddc
+        import shared_monitors_win
+
+        try:
+            with app_config.SETTINGS_LOCK:
+                held = shared_monitors.state(app_config.load_settings(self.config_path))
+        except (ConfigError, OSError, ValueError):
+            held = shared_monitors.state({})
+        self._set_monitors_chord(held["key"])
+        self.server.key_watch = self._monitors_chord_driven.feed
+        self.shared_monitors = shared_monitors_win.SharedMonitors(
+            monitors_ddc, desktop_win, codes=held["codes"], peers=held["peers"],
+            changed=self.bridge.monitors_changed.emit,
+            learned=lambda codes: self._save_shared_monitors(codes=codes))
+        self.shared_monitors.start()
+        self.monitors_picture_timer = QTimer(self)
+        self.monitors_picture_timer.setInterval(3000)
+        self.monitors_picture_timer.timeout.connect(self._check_monitors_picture)
+        self.monitors_picture_timer.start()
+
+    def _set_monitors_chord(self, chord) -> None:
+        for watch in (self._monitors_chord_hook, self._monitors_chord_driven):
+            watch.chord = chord or None
+
+    def _save_shared_monitors(self, **fields) -> None:
+        """Merges `fields` into settings.json's shared-monitor record. Any thread."""
+        try:
+            with app_config.SETTINGS_LOCK:
+                settings = app_config.load_settings(self.config_path)
+                held = settings.get(shared_monitors.SETTINGS_KEY)
+                held = dict(held) if isinstance(held, dict) else {}
+                held.update(fields)
+                app_config.set_own(self.config_path, **{shared_monitors.SETTINGS_KEY: held})
+        except Exception:
+            LOGGER.exception("Could not save the shared monitors")
+
+    def _on_shared_monitors_changed(self) -> None:
+        """What this PC's shared monitors show, or its own codes on them, changed: tell the peers
+        that share them, and give or take back their place in the picture."""
+        if self.shared_monitors is None or self._closing:
+            return
+        announcement = self.shared_monitors.announcement()
+        if announcement != self._monitors_announced:
+            self._monitors_announced = announcement
+            for peer, caps in self._peer_caps().items():
+                if "monitors" in caps:
+                    self._send_to(peer, protocol.monitors_msg("announce", announcement))
+        away = self.shared_monitors.away()
+        if away != self._monitors_away:
+            self._apply_monitors_away(away)
+        self._reflect_shared_monitors()
+
+    def _apply_monitors_away(self, away: dict) -> None:
+        self._monitors_away = dict(away)
+        if self._config is None:
+            return
+        self._refresh_own_displays()
+        if not self.shared_monitors.moves_picture():
+            self._reconcile_displays()
+            return
+        try:
+            self._move_monitors_picture(away)
+        except Exception:
+            LOGGER.exception("Could not move the shared monitors' place in the picture")
+        self._reconcile_displays()
+
+    def _move_monitors_picture(self, away: dict, *, repair: bool = False) -> bool:
+        """Gives the away monitors' place to the peer they show, or takes it back, reading the
+        settings fresh: a picture written from an older read would undo it. True when it moved."""
+        with app_config.SETTINGS_LOCK:
+            settings = self._window_settings(force=True)
+            if self._window_settings_stale:
+                return False
+            home = shared_monitors.state(settings)["home"]
+            if repair and (home is not None) == bool(away):
+                return False
+            peer = next(iter(sorted(set(away.values()))), None) or (home or {}).get("peer")
+            if peer is None:
+                return False
+            LOGGER.info("%s shared monitors %s now show %s", "Repairing the picture:" if repair else "",
+                        sorted(away) or "all", self._label_of(protocol.read_id(peer)) if away else "this PC")
+            outcome = crossing_state.shared_monitors_moved(
+                settings, platform="pc", peer=peer, away_keys=list(away), own_displays=self._own_displays(),
+                now=time.time(), capable=self._layout_capable())
+            self._carry_crossing(outcome)
+            return bool(outcome["changed"])
+
+    def _check_monitors_picture(self) -> None:
+        """Every few seconds: the picture still matches what the shared monitors show (a picture from
+        another machine, stamped later but built before the last move, can arrive after it)."""
+        if self.shared_monitors is None or self._config is None or self._closing:
+            return
+        try:
+            if self.shared_monitors.moves_picture() and self._move_monitors_picture(self._monitors_away, repair=True):
+                self._reconcile_displays()
+        except Exception:
+            LOGGER.exception("Could not check the shared monitors' place in the picture")
+
+    def _on_monitors_message(self, peer: str, read) -> None:
+        if self.shared_monitors is None:
+            return
+        action, monitors = read
+        if action == "announce":
+            self.shared_monitors.set_peer(peer, monitors)
+            self._save_shared_monitors(peers=self.shared_monitors.snapshot()["peers"])
+        elif action == "give":
+            self.shared_monitors.taken(peer)
+        elif action == "request":
+            # The asking PC moves its own input; this one's stays where it is.
+            if self.shared_monitors.give(peer):
+                self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
+
+    def switch_computer(self) -> None:
+        """The Switch computer button, tray action and shortcut: the monitors shared with a peer
+        go to it, with this PC's input when it is here, or come back from it."""
+        if self.shared_monitors is None:
+            return
+        shared = self.shared_monitors.shared()
+        linked = {protocol.id_text(peer) for peer in self._peer_caps()}
+        peer = next((ident for ident in sorted(shared) if ident in linked), None)
+        if peer is None:
+            self._on_alert(tr("Beamer"), tr("No monitor is shared with a connected PC. Run Beamer on the other "
+                                            "PC wired to these monitors and pair it with this one."))
+            return
+        if self.shared_monitors.showing_here(peer):
+            if not self.shared_monitors.give(peer):
+                self._on_alert(tr("Beamer"), tr("The monitors did not switch to {name}.").format(name=self._label_of(protocol.read_id(peer))))
+                return
+            self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
+            # The input follows once the peer has had the `give`, so it lands on monitors it shows.
+            QTimer.singleShot(300, lambda: self._pass_input_to(peer))
+        else:
+            self._send_to(protocol.read_id(peer), protocol.monitors_msg("request"))
+            if self.sender.owner == protocol.read_id(peer):
+                self.sender.set_redirecting(False)
+
+    def _pass_input_to(self, peer: str) -> None:
+        """Moves the input that is on this PC to `peer`, landing on a monitor it now shows."""
+        target = protocol.read_id(peer)
+        if target is None:
+            return
+        listed = (self.shared_monitors.shared() if self.shared_monitors is not None else {}).get(peer, [])
+        display = next((monitor["display"] for monitor in listed), None)
+        if self.server.driven:
+            self.server.pass_on(target, "top", 0.5, display=display, side="top" if display else None)
+        elif self.sender.owner is None and self._can_send():
+            self.sender.go(target)
+
+    def _record_monitors_key(self, value: str) -> None:
+        try:
+            with app_config.SETTINGS_LOCK:
+                settings = app_config.load_settings(self.config_path)
+                if value:
+                    # Clash-checked as a jump key held by no peer: against the trigger and every jump key.
+                    ways.check_jump_key(settings, settings.get("machine_id", ""), value,
+                                        self._config.trigger_key if self._config else "")
+        except ValueError as exc:
+            self._on_alert(tr("Beamer"), str(exc))
+            self._reflect_shared_monitors()
+            return
+        self._save_shared_monitors(key=value or "")
+        self._set_monitors_chord(value)
+        self._reflect_shared_monitors()
+
+    def _arm_monitors_key(self, armed: bool) -> None:
+        for watch in (self._monitors_chord_hook, self._monitors_chord_driven):
+            watch.recording = armed
+
+    def _reflect_shared_monitors(self) -> None:
+        group = getattr(self, "monitors_group", None)
+        if group is None:
+            return
+        shared = self.shared_monitors.shared() if self.shared_monitors is not None else {}
+        group.setVisible(bool(shared))
+        action = getattr(self, "monitors_action", None)
+        if action is not None:
+            action.setVisible(bool(shared))
+        if not shared:
+            return
+        peer = sorted(shared)[0]
+        count = len(shared[peer])
+        away = set(self._monitors_away.values())
+        where = (tr("showing {name}").format(name=self._label_of(protocol.read_id(peer))) if peer in away
+                 else tr("showing this PC"))
+        self.monitors_note.setText(tr("{count} monitors shared with {name}, {where}.").format(
+            count=count, name=self._label_of(protocol.read_id(peer)), where=where))
+        try:
+            key = shared_monitors.state(app_config.load_settings(self.config_path))["key"]
+        except Exception:
+            key = ""
+        if not self.monitors_key.armed:
+            self.monitors_key.set_value(key)
+
     def _receive_identify_screens(self, peer, labels) -> None:
         if isinstance(peer, bytes):
             peer = protocol.id_text(peer)
@@ -2001,6 +2233,8 @@ class WindowsApplication(QWidget):
                 self._same_state(), self._peer_caps().get(peer, ()))))
         messages.extend(self._desk_messages(profiles.desk_message(outcome["settings"]),
                                             self._peer_caps().get(peer, ())))
+        if getattr(self, "shared_monitors", None) is not None and "monitors" in self._peer_caps().get(peer, ()):
+            messages.append(protocol.monitors_msg("announce", self.shared_monitors.announcement()))
         return messages
 
     def _driver_platform(self) -> str:
@@ -2022,8 +2256,9 @@ class WindowsApplication(QWidget):
             "platform": OWN_PLATFORM,
             "app": VERSION[:32] if VERSION.isascii() and VERSION.isprintable() else "dev",
             # A swipe has no shortcut every Linux desktop shares, so Linux does not offer gestures.
-            "caps": [cap for cap in ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "profiles", "displays", "identify_screens", "ping_rtt", "motion_path")
-                     if not (cap == "gestures" and OWN_PLATFORM == "linux")],
+            "caps": [cap for cap in ("clipboard", "clipboard_image", "gestures", "media_keys", "text", "settings", "design_sync", "layout", "profiles", "displays", "identify_screens", "ping_rtt", "motion_path", "monitors")
+                     if not (cap == "gestures" and OWN_PLATFORM == "linux")
+                     and not (cap == "monitors" and OWN_PLATFORM != "windows")],
             "port": self._settings_port,
         }
 
@@ -2874,7 +3109,12 @@ class WindowsApplication(QWidget):
             refresh = getattr(desktop, "refresh_qt_screens", None)
             if callable(refresh):
                 refresh()
-            self._own_display_map = desktop.display_map()
+            monitors = getattr(self, "shared_monitors", None)
+            if monitors is not None and not monitors.moves_picture() and hasattr(desktop, "display_map_all"):
+                # The other machine moves the tiles for the shared monitors; this one's tile keeps them all.
+                self._own_display_map = desktop.display_map_all()
+            else:
+                self._own_display_map = desktop.display_map()
 
     def _screen_added(self, screen) -> None:
         screen.geometryChanged.connect(self._displays_changed)
@@ -5044,6 +5284,9 @@ class WindowsApplication(QWidget):
         self.redirect_action.triggered.connect(self.toggle_redirect)
         self.pause_action = menu.addAction(tr("Pause crossing"))
         self.pause_action.triggered.connect(self.toggle_pause)
+        self.monitors_action = menu.addAction(tr("Switch computer"))
+        self.monitors_action.triggered.connect(self.switch_computer)
+        self.monitors_action.setVisible(False)
         menu.addSeparator()
         self.tray_menu = menu
         # One tick per direction, each the same switch the Overview page shows, so either
@@ -5287,6 +5530,9 @@ class WindowsApplication(QWidget):
             return self.sender.on_text(name.text, vk, down)
         if isinstance(name, DeadKey):
             return self.sender.on_dead_key(vk, down)
+        chord = getattr(self, "_monitors_chord_hook", None)
+        if chord is not None and chord.feed(name, down):
+            return True
         if self.sender.handle_jump_key(name, down, vk):
             return True
         if not self.sender.shortcut_armed:
@@ -5517,6 +5763,8 @@ class WindowsApplication(QWidget):
         if self.pairing is not None:
             self.pairing.cancel_nearby()
             self.pairing.stop()
+        if self.shared_monitors is not None:
+            self.shared_monitors.stop()
         self.server.stop()
         self._stop_sending()
         shortcut = getattr(self, "global_shortcut", None)
@@ -6042,6 +6290,8 @@ def main() -> None:
         )
         application._input_controller_release = controller_release
         controller_release = None
+        # Started here, not by the window: it reads and switches real monitors.
+        application._start_shared_monitors()
         if startup_admin_error is not None:
             application._on_admin_mode_changed(startup_admin_error)
         quit_signals = quit_signals_module.QuitSignals(application.quit, parent=app)

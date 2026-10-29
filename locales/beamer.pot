@@ -4422,6 +4422,14 @@ msgid "On Wayland the desktop lets input go to another machine only when the poi
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "Switch computer"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "Switch computer shortcut"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Hold this PC's edges while an app on it is full screen"
 msgstr ""
 
@@ -4443,6 +4451,10 @@ msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "Waiting for Windows permission…"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "showing this PC"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -4644,6 +4656,10 @@ msgid "Beamer will run as administrator on this PC. Changing this restarts Beame
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "No monitor is shared with a connected PC. Run Beamer on the other PC wired to these monitors and pair it with this one."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Start at sign-in needs Beamer to run as the signed-in account."
 msgstr ""
 
@@ -4730,6 +4746,16 @@ msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "Update through your software store, or download the Flatpak from the release page and open it."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "showing {name}"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "{count} monitors shared with {name}, {where}."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -4866,6 +4892,11 @@ msgstr ""
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
 msgid "Could not save this PC's name: {error}"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "The monitors did not switch to {name}."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py

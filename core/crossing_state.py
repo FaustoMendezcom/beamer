@@ -11,7 +11,7 @@ import os
 import time
 from typing import TypedDict
 
-from core import profiles, protocol, return_edge, settings_sync, ways
+from core import profiles, protocol, return_edge, settings_sync, shared_monitors, ways
 
 
 class Outcome(TypedDict):
@@ -320,6 +320,43 @@ def displays_changed(settings, *, platform, own_displays, now, capable=()):
     result = _compile(saved, platform, capable=capable, now=now)
     saved = result["settings"]
     return _outcome(settings, saved, result, tell=_tells(settings, saved), send_picture=changed)
+
+
+def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, now, capable=()):
+    """This machine's shared displays `away_keys` now show `peer` (or, empty, all show this machine
+    again): the picture gives their place to `peer`'s tile, or puts this machine's tile back as it
+    was and parks `peer`'s, so every machine's edges lead to whichever machine they show. Called
+    with the displays reported before they are hidden when going away, and after when coming home."""
+    saved = _initial(settings, capable)
+    own = saved.get("machine_id", "")
+    held = saved.get(shared_monitors.SETTINGS_KEY)
+    held = copy.deepcopy(held) if isinstance(held, dict) else {}
+    home = held.get("home") if isinstance(held.get("home"), dict) else None
+    away_keys = sorted(set(away_keys))
+    tile = saved["layout"].get(own)
+    moved = False
+    if away_keys and home is None and isinstance(tile, dict):
+        placed = shared_monitors.away_layout(saved["layout"], own, peer, away_keys)
+        if placed is not None:
+            held["home"] = {key: copy.deepcopy(tile[key]) for key in ("x", "y", "w", "h", "display_offsets")
+                            if key in tile}
+            held["home"]["peer"] = peer
+            saved["layout"] = placed
+            moved = True
+    elif not away_keys and home is not None:
+        # As ways.refresh_displays stores them: the app reports return_edge.Rect.
+        screens = {key: ({"x": rect.x, "y": rect.y, "w": rect.width, "h": rect.height}
+                         if isinstance(rect, return_edge.Rect) else rect)
+                   for key, rect in (own_displays or {}).items()}
+        saved["layout"] = shared_monitors.home_layout(saved["layout"], own, home.get("peer", peer), home, screens)
+        held.pop("home", None)
+        moved = True
+    if moved:
+        saved[shared_monitors.SETTINGS_KEY] = held
+        _stamp(saved, time.time() if now is None else now)
+    result = _compile(saved, platform, capable=capable, now=now)
+    saved = result["settings"]
+    return _outcome(settings, saved, result, tell=_tells(settings, saved), send_picture=moved)
 
 
 def paired(settings, *, platform, own_displays, now, capable=()):

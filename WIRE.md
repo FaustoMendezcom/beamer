@@ -487,6 +487,7 @@ Capabilities say what a machine does with a message it receives:
 | `layout` | with `settings`, it sends and receives the shared tile picture (`settings.data.layout`) |
 | `displays` | with `layout`, it sends and receives each machine's logical display rectangles and display-targeted edges |
 | `ping_rtt` | it sends and answers response-time probes on `ping` in both directions |
+| `monitors` | it sends and acts on `monitors`, for monitors wired to two machines (section 10) |
 
 A sender does not send a message its peer's capabilities do not cover. A receiver that gets one
 anyway drops it, and still acknowledges it when it carries a `seq`.
@@ -1345,6 +1346,40 @@ for all its current displays. Labels use each machine's top-to-bottom, left-to-r
 The receiver shows click-through, non-activating overlays for three seconds, without changing
 input ownership, saving settings or relaying the request. This is a control message, without
 an input sequence number or acknowledgement.
+
+**`monitors`** is for shared monitors: physical monitors wired to two machines' inputs, which the
+machine a monitor shows switches over DDC/CI (VCP `0x60`). Both ends advertise the optional
+`monitors` capability; older peers, and the Mac, receive none. Wire version 6 is unchanged.
+
+```json
+{"type":"monitors","data":{"action":"announce","monitors":[
+  {"id":"GBT3403:24142B000972","code":7,"display":"0","showing":true}]}}
+{"type":"monitors","data":{"action":"give"}}
+{"type":"monitors","data":{"action":"request"}}
+```
+
+- `announce`, sent when a link comes up and whenever it changes: the sender's monitors it knows
+  its own input code on. `id` is the monitor's EDID identity, maker and product code then the
+  serial (one to 64 of `A-Z a-z 0-9 _ . : -`), the same on every machine wired to it; a monitor
+  with no EDID serial is never announced. `code` (1 to 255) is the input value the monitor reads
+  while it shows the sender, learned by reading it, as vendors number inputs differently.
+  `display` is the sender's display key for it and `showing` whether it shows the sender now. At
+  most sixteen, with unique ids. A monitor both machines announce is shared; one more than one
+  peer announces is shared with none.
+- `give`: the sender has switched every monitor it shares with the recipient, that showed the
+  sender, to the recipient's `code`. The recipient reads them again.
+- `request`: the recipient, which the shared monitors show, is asked to switch them to the
+  sender's `code`. It answers with `give` once it has.
+
+A monitor answers DDC/CI only from the input it shows, so only that machine can switch it; a
+read from any other fails or reads 0, which is how a machine tells its shared monitors show the
+other. While they do, the machine leaves them out of its display map (their keys are kept, so the
+others are not renumbered), fences its pointer off them, and, when it still has a display of its
+own, moves its tile in the shared picture onto the displays it keeps and lays the peer's tile
+over the place they leave, with a new `layout_set_at`. Every machine's zones then lead to the
+machine the monitors show, with no change to how zones are compiled. When they show it again it
+puts its tile back and parks the peer's below the others, touching nothing. A machine that would
+keep no display moves nothing. These are control messages, without `seq` or acknowledgement.
 
 **`text`** is a string the receiver types as it stands, for a phone's keyboard, where naming each
 key would lose accents and emoji. The receiver advertises `text` only if it can type any Unicode

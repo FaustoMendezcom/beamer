@@ -247,6 +247,7 @@ class LinkSender:
         self.arrangement_callback: Optional[Callable] = None
         self.settings_callback: Optional[Callable] = None
         self.identify_callback: Optional[Callable] = None
+        self.monitors_callback: Optional[Callable] = None
         self.paired_callback: Optional[Callable] = None
         self.link_callback: Optional[Callable[[bytes, bool], None]] = None
 
@@ -1069,6 +1070,10 @@ class LinkSender:
             labels = protocol.read_identify_screens(message)
             if labels is not None and self.identify_callback is not None and "identify_screens" in self.links.caps(peer):
                 self._call(self.identify_callback, peer, labels)
+        elif kind == protocol.MSG_MONITORS:
+            read = protocol.read_monitors(message)
+            if read is not None and self.monitors_callback is not None and "monitors" in self.links.caps(peer):
+                self._call(self.monitors_callback, peer, read)
         elif kind == protocol.MSG_PAIRED:
             read = protocol.read_paired(message)
             if read is not None and self.paired_callback is not None:

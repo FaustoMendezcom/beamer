@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Callable, Optional, Tuple
 
 from . import return_edge as crossing
+from . import mac_shortcuts
 from . import peerlist
 from . import protocol
 from .i18n import tr, trc
@@ -422,6 +423,8 @@ class _Link:
                 return False
             if message.get("type") == protocol.MSG_IDENTIFY_SCREENS and "identify_screens" not in self.caps:
                 return True
+            if message.get("type") == protocol.MSG_MONITORS and "monitors" not in self.caps:
+                return True
             if len(self.outbox) >= OUTBOX_LIMIT:
                 LOGGER.warning("%s stopped reading; closing its link", self.name)
                 self._close_locked()
@@ -513,7 +516,8 @@ class LinkResponder:
     and `pressure_callback(edge, pressure, crossed, part)` for the crossing effects;
     `arrangement_callback(peer, {edge, set_at, by})`; `settings_callback(peer, data)`, only from a
     peer whose `caps` list `settings`; `identify_callback(peer, labels)` when both ends support
-    screen identification; `paired_callback(peer, ids)`; `link_callback(peer, up)`; and
+    screen identification; `monitors_callback(peer, (action, monitors))` when both ends share
+    monitors (section 8); `paired_callback(peer, ids)`; `link_callback(peer, up)`; and
     `announce(peer)`, the messages to send once a link is up (section 3, announcements).
     `status_callback(state, detail)` takes ServerState.
 
@@ -541,6 +545,7 @@ class LinkResponder:
         arrangement_callback=None,
         settings_callback=None,
         identify_callback=None,
+        monitors_callback=None,
         paired_callback=None,
         link_callback=None,
         announce=None,
@@ -560,9 +565,14 @@ class LinkResponder:
         self._callbacks = {
             "owner": owner_callback, "arrival": arrival_callback, "pressure": pressure_callback,
             "arrangement": arrangement_callback, "settings": settings_callback, "paired": paired_callback,
-            "identify": identify_callback,
+            "identify": identify_callback, "monitors": monitors_callback,
             "link": link_callback,
         }
+        # A local chord seen in the owner's keys before they are typed here: given (name, down), True
+        # swallows the key (the Switch computer shortcut on a machine driven from another).
+        self.key_watch: Optional[Callable[[str, bool], bool]] = None
+        # A Windows receiver driven from a Mac: Command-C/V/X copy, paste and cut (core.mac_shortcuts).
+        self.mac_shortcuts = False
         self._announce = announce or (lambda peer: [])
         self._prebound_listener = listener
         # This machine's speed for a peer's pointer and scroll, and whether
@@ -1062,6 +1072,10 @@ class LinkResponder:
                 labels = protocol.read_identify_screens(message)
                 if labels is not None and "identify_screens" in link.caps and "identify_screens" in link.own_caps:
                     self._callback("identify", link.peer_id, labels)
+            elif kind == protocol.MSG_MONITORS:
+                read = protocol.read_monitors(message)
+                if read is not None and "monitors" in link.caps and "monitors" in link.own_caps:
+                    self._callback("monitors", link.peer_id, read)
             elif kind == protocol.MSG_PING:
                 self._on_ping(link, message)
             elif kind == protocol.MSG_PAIRED:
@@ -1303,11 +1317,22 @@ class LinkResponder:
         kind = read["type"]
         if kind in (protocol.MSG_KEYDOWN, protocol.MSG_KEYUP):
             down = kind == protocol.MSG_KEYDOWN
-            if down:
-                link.held[("key", read["key"])] = read["us"]
-            else:
-                link.held.pop(("key", read["key"]), None)
-            injector.inject_key(read["key"], down=down, us=read["us"])
+            watch = getattr(self, "key_watch", None)
+            if watch is not None:
+                try:
+                    if watch(read["key"], down):
+                        return
+                except Exception:
+                    LOGGER.exception("The local shortcut could not read a key")
+            shortcuts = self._command_shortcuts(link) if getattr(self, "mac_shortcuts", False) else None
+            events = shortcuts.key(read["key"], down) if shortcuts is not None else [(read["key"], down)]
+            for name, pressed in events:
+                us = read["us"] if name == read["key"] else None
+                if pressed:
+                    link.held[("key", name)] = us
+                else:
+                    link.held.pop(("key", name), None)
+                injector.inject_key(name, down=pressed, us=us)
         elif kind == protocol.MSG_MOUSEMOVE:
             dx, dy = read["dx"], read["dy"]
             if scaled and not (dx or dy):
@@ -1324,6 +1349,11 @@ class LinkResponder:
             link.timing.add("mouse_inject", time.monotonic() - inject_at)
         elif kind in (protocol.MSG_MOUSEDOWN, protocol.MSG_MOUSEUP):
             down = kind == protocol.MSG_MOUSEDOWN
+            shortcuts = self._command_shortcuts(link) if getattr(self, "mac_shortcuts", False) else None
+            if down and shortcuts is not None:
+                for name, pressed in shortcuts.flush():
+                    link.held[("key", name)] = None
+                    injector.inject_key(name, down=pressed)
             if down:
                 link.held[("button", read["button"])] = None
             else:
@@ -1384,9 +1414,21 @@ class LinkResponder:
             return dx, dy
         return round(dx * earliest), round(dy * earliest)
 
+    def _command_shortcuts(self, link: _Link):
+        """This link's Mac-shortcut state while the app turned them on and a Mac drives, else None."""
+        if not getattr(self, "mac_shortcuts", False) or link.peer_platform not in ("macos", "ios"):
+            return None
+        state = getattr(link, "command_shortcuts", None)
+        if state is None:
+            state = link.command_shortcuts = mac_shortcuts.CommandShortcuts()
+        return state
+
     def _release_locked(self, link: _Link) -> None:
         """Let go of every key and button injected for this owner (section 4, step 1), then the
         injector's own record of what it holds, as the backstop."""
+        state = getattr(link, "command_shortcuts", None)
+        if state is not None:
+            state.reset()
         injector = self._injector_module()
         for (kind, name), us in reversed(list(link.held.items())):
             try:
@@ -1660,6 +1702,28 @@ class LinkResponder:
         elif why is not None and not link.closed.is_set():
             link.post(protocol.refuse_msg(link.route, why))
         return after
+
+    def pass_on(self, peer: bytes, edge: str = "top", offset: float = 0.5,
+                display: Optional[str] = None, side: Optional[str] = None) -> bool:
+        """Asks the owner to move its input on to `peer`, as a zone crossing does (section 5),
+        landing at `edge`/`offset`, or on `display`'s `side` when the peer named one. False when
+        nobody drives this machine or the switch cannot be built."""
+        with self._lock:
+            link = self._owner
+            if link is None:
+                return False
+            try:
+                message = protocol.switch_v6(link.route, peer, edge, offset, display=display, side=side)
+            except ValueError:
+                try:
+                    message = protocol.switch_v6(link.route, peer, edge, offset)
+                except ValueError:
+                    LOGGER.exception("Could not ask %s to move its input on", link.name)
+                    return False
+            self._disarm_locked()
+            LOGGER.info("Asking %s to move its input on to %s", link.name, protocol.id_text(peer))
+            link.post(message)
+            return True
 
     def send_home(self) -> bool:
         """Sends the owner home from here (section 5): its shortcut, a menu, a direction switch

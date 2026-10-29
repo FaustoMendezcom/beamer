@@ -110,6 +110,7 @@ MSG_SWITCH = "switch"
 MSG_ARRANGEMENT = "arrangement"
 MSG_SETTINGS = "settings"
 MSG_IDENTIFY_SCREENS = "identify_screens"
+MSG_MONITORS = "monitors"
 
 # System trackpad gestures. The Mac classifies one at the end of the movement and sends a
 # single message; the name is the finger motion, not its meaning, so the receiver decides
@@ -396,6 +397,50 @@ def read_identify_screens(message):
             or len(set(displays.values())) != len(displays)):
         return None
     return dict(displays)
+
+
+MONITORS_ACTIONS = ("announce", "give", "request")
+MAX_MONITORS = 16
+_MONITOR_ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
+
+
+def monitors_msg(action: str, monitors=()) -> dict:
+    """Shared monitors, wired to two machines' inputs (WIRE.md section 8): `announce` lists this
+    machine's monitors by EDID identity, each with the input code that shows this machine and the
+    display key it has here; `give` says this machine has switched the monitors it shares with
+    the peer to the peer's input; `request` asks the peer, which they show, to switch them here.
+    Optional on wire 6, sent only to peers listing `monitors`."""
+    data = {"action": action}
+    if action == "announce":
+        data["monitors"] = [dict(monitor) for monitor in monitors]
+    return {"type": MSG_MONITORS, "data": data}
+
+
+def read_monitors(message):
+    """(action, [{id, code, display, showing}]) or None. Only `announce` carries monitors."""
+    parsed = read_message(message)
+    if parsed is None or parsed[0] != MSG_MONITORS:
+        return None
+    action = parsed[1].get("action")
+    if action not in MONITORS_ACTIONS:
+        return None
+    if action != "announce":
+        return action, []
+    listed = parsed[1].get("monitors")
+    if not isinstance(listed, list) or len(listed) > MAX_MONITORS:
+        return None
+    monitors = []
+    for item in listed:
+        if (not isinstance(item, dict) or not isinstance(item.get("id"), str)
+                or _MONITOR_ID.fullmatch(item["id"]) is None
+                or type(item.get("code")) is not int or not 1 <= item["code"] <= 255
+                or not isinstance(item.get("display"), str) or _DISPLAY_KEY.fullmatch(item["display"]) is None
+                or type(item.get("showing")) is not bool):
+            return None
+        monitors.append({key: item[key] for key in ("id", "code", "display", "showing")})
+    if len({item["id"] for item in monitors}) != len(monitors):
+        return None
+    return action, monitors
 
 
 def gesture_msg(name: str) -> dict:
