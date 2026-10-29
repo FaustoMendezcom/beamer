@@ -172,6 +172,13 @@ class SharedMonitorsTests(unittest.TestCase):
         self.assertFalse(self.monitors.moves_picture())
         self.monitors._own_id = "AAAA"
         self.assertTrue(self.monitors.moves_picture())
+
+    def test_a_peer_claim_without_its_time_yields_to_a_standing_one(self):
+        self.monitors.poll()
+        self.monitors.host, self.monitors.host_since, self.monitors._own_id = True, 1, "zzzz"
+        self.monitors.set_peer(PC2, [{"id": "GBT3403:972", "code": 8, "display": "0", "showing": False}], host=True)
+        self.assertFalse(self.monitors.host_contested())
+        self.assertTrue(self.monitors.moves_picture())
         only = shared_monitors_win.SharedMonitors(
             type("Ddc", (FakeDdc,), {"monitors": lambda self: [RIGHT, LEFT]})(), self.desktop,
             codes={}, peers={}, changed=lambda: None, learned=lambda codes: None)

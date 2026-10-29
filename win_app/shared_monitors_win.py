@@ -111,7 +111,9 @@ class SharedMonitors:
         with self._lock:
             before = self._away_locked()
             self._peers[peer] = list(monitors)
-            self._peer_host[peer] = (bool(host), int(host_since))
+            # A claim without its time (an earlier build) counts from now, as this PC's own would:
+            # it yields to one already standing rather than outranking it.
+            self._peer_host[peer] = (bool(host), int(host_since) or int(time.time()))
             after = self._away_locked()
         if before != after:
             self._apply_fence()
