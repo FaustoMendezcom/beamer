@@ -596,6 +596,34 @@ def picture_capable(settings, capable=()):
     return set(capable)
 
 
+def _inner_corner(screen, corner, own_frames) -> bool:
+    """Whether `screen`'s corner `corner` ("top_left", ...) is also on another of this machine's
+    own displays, within CONTACT_SLACK: an inner junction of its arrangement (a 2x2 grid's centre)."""
+    vertical, horizontal = (str(corner).split("_") + [""])[:2]
+    x = screen["x"] + (screen["w"] if horizontal == "right" else 0)
+    y = screen["y"] + (screen["h"] if vertical == "bottom" else 0)
+    return any(frame.get("display") != screen.get("display")
+               and frame["x"] - CONTACT_SLACK <= x <= frame["x"] + frame["w"] + CONTACT_SLACK
+               and frame["y"] - CONTACT_SLACK <= y <= frame["y"] + frame["h"] + CONTACT_SLACK
+               for frame in own_frames)
+
+
+def _edge_covers(screen, corner, found) -> bool:
+    """Whether an edge contact on the same display, on one of `corner`'s two sides, reaches the
+    corner point within CONTACT_SLACK."""
+    vertical, horizontal = (str(corner).split("_") + [""])[:2]
+    x = screen["x"] + (screen["w"] if horizontal == "right" else 0)
+    y = screen["y"] + (screen["h"] if vertical == "bottom" else 0)
+    for other, contact, _target in found:
+        side, start, end = contact
+        if other.get("display") != screen.get("display") or side not in (vertical, horizontal):
+            continue
+        along = y if side in ("left", "right") else x
+        if start - CONTACT_SLACK <= along <= end + CONTACT_SLACK:
+            return True
+    return False
+
+
 def compile_layout(settings, layout, moved=None, capable=(), now=None, platform="pc",
                    live=None, gone=None):
     """Generate zones from the picture and saved intent, without changing the caller's settings.
@@ -726,6 +754,11 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
                 side, start, end = contact
                 if side == "corner":
                     corner = contact[1]
+                    if _inner_corner(screen, corner, screens.get(own_id, ())) or _edge_covers(screen, corner, found):
+                        # The point where this machine's own displays meet, or one an edge to the same
+                        # peer already crosses: a pointer passing it goes to the next display, or
+                        # through that edge to what lies right across it, never diagonally elsewhere.
+                        continue
                     if (intent["edge"] or intent["corner"]) and corner not in corners:
                         corners.add(corner)
                         edge = corner.split("_")[1]

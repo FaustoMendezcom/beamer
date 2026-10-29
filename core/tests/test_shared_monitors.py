@@ -256,6 +256,24 @@ class PictureTests(unittest.TestCase):
         crossing_state._keep_dragged_home(other, PC2)
         self.assertEqual(other["shared_monitors"]["kept"]["y"], -90)
 
+    def corners(self, settings):
+        return [zone for zone in settings["zones"] if zone["kind"] == "corner"]
+
+    def test_no_corner_where_its_own_displays_meet(self):
+        # Home: the Mac's tile touches the bottom-right display only at the grid's centre, where the
+        # top and both bottom displays meet. Passing it goes to the next display, never the Mac.
+        result = ways.compile_layout(self.settings(), self.settings()["layout"], platform="pc")
+        self.assertEqual(self.corners(result["settings"]), [])
+        self.assertEqual(self.zones(result["settings"]), [(MAC, "edge", "1", "top"), (MAC, "edge", "2", "left")])
+
+    def test_no_corner_where_an_edge_to_the_same_machine_reaches(self):
+        # Away: the top display's bottom edge leads to PC2 already, its bottom-left corner too;
+        # a corner there would send the pointer diagonally to PC2's other display.
+        away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                   own_displays=None, now=200)["settings"]
+        self.assertEqual(self.corners(away), [])
+        self.assertIn((PC2, "edge", "2", "bottom"), self.zones(away))
+
     def test_going_away_twice_keeps_the_first_home(self):
         held = self.settings()
         once = crossing_state.shared_monitors_moved(held, platform="pc", peer=PC2, away_keys=["0", "1"],
