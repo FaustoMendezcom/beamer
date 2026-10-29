@@ -534,6 +534,9 @@ class AdministratorWindowTests(unittest.TestCase):
         self.helper_says = True
         fake_user32 = mock.Mock()
         fake_user32.GetForegroundWindow.return_value = 0x1234
+        fake_user32.GetCursorPos.return_value = 1
+        fake_user32.WindowFromPoint.return_value = 0x1234
+        fake_user32.GetAncestor.return_value = 0x1234
         fake_user32.SendInput.side_effect = lambda count, array, size: self.sent.append(count) or count
         patches = [
             mock.patch.object(input_injector, "user32", fake_user32),
@@ -546,6 +549,7 @@ class AdministratorWindowTests(unittest.TestCase):
             mock.patch.object(input_injector, "_foreground_seen", [None, False]),
             mock.patch.object(input_injector, "_administrator_refused_at", [float("-inf")]),
             mock.patch.object(input_injector, "_helper_typing", [None]),
+            mock.patch.object(input_injector, "_administrator_windows", {}),
         ]
         for patch in patches:
             patch.start()
@@ -563,6 +567,17 @@ class AdministratorWindowTests(unittest.TestCase):
         input_injector._send_input(move)
         self.assertEqual(self.helped, [(1, True)])
         self.assertEqual(self.sent, [1, 1])
+
+    def test_a_click_on_an_administrator_window_behind_goes_to_the_helper(self):
+        # Explorer in front, the administrator window under the pointer: the click that would bring
+        # it to the front is dropped by Windows unless the helper sends it.
+        windows = {0x1234: False, 0x5678: True}
+        self.addCleanup(mock.patch.stopall)
+        input_injector.user32.GetAncestor.return_value = 0x5678
+        mock.patch.object(input_injector, "foreground_blocker", side_effect=lambda hwnd=None: mock.Mock(
+            elevated=windows[hwnd], window_class="ConsoleWindowClass", pid=4242)).start()
+        input_injector._send_input(input_injector._mouse_input(0, 0, 0, input_injector.MOUSEEVENTF_LEFTDOWN))
+        self.assertEqual((self.helped, self.sent), ([(1, True)], []))
 
     def test_an_ordinary_window_is_sent_to_as_ever(self):
         with mock.patch.object(input_injector, "foreground_blocker", return_value=mock.Mock(

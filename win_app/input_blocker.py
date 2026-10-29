@@ -122,15 +122,16 @@ def _integrity_level(token) -> tuple[int | None, int | None]:
     return (int(rid[0]), None) if rid else (None, ERROR_INVALID_DATA)
 
 
-def foreground_blocker() -> ForegroundBlocker:
-    """Keep inaccessible processes uncertain; access denial alone does not prove elevation."""
+def foreground_blocker(hwnd=None) -> ForegroundBlocker:
+    """Keep inaccessible processes uncertain; access denial alone does not prove elevation. The
+    foreground window's, or `hwnd`'s (the window under the pointer)."""
     if user32 is None or kernel32 is None or advapi32 is None:
         return ForegroundBlocker()
     values = {}
     process = None
     token = HANDLE()
     try:
-        hwnd = user32.GetForegroundWindow()
+        hwnd = hwnd or user32.GetForegroundWindow()
         if not hwnd:
             return ForegroundBlocker()
         values["hwnd"] = int(hwnd)

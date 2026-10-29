@@ -2,6 +2,7 @@
 
 import ctypes
 import functools
+from ctypes import wintypes
 import logging
 import os
 import subprocess
@@ -63,6 +64,10 @@ if _IS_WINDOWS:
     ]
     user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.WindowFromPoint.restype = ctypes.c_void_p
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.GetAncestor.restype = ctypes.c_void_p
+    user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
 
 INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
@@ -164,30 +169,51 @@ _secure_client = None
 # The foreground window last looked at and whether it is an administrator window; and when the
 # helper last said no to one, after which it is asked again only after HELPER_RETRY_SECONDS.
 _foreground_seen = [None, False]
+_administrator_windows: Dict[int, bool] = {}
+GA_ROOT = 2
 _administrator_refused_at = [float("-inf")]
 _helper_typing = [None]
 HELPER_RETRY_SECONDS = 5.0
 
 
 def _administrator_window_in_front() -> bool:
-    """Whether an unelevated Beamer has an administrator window in front, read once per foreground
-    window. Windows drops input to such a window silently, SendInput still saying it was sent, so
-    this is asked before sending rather than after a refusal. Unknown elevation counts as yes: a
-    standard account may not read another account's process at all."""
+    """Whether an unelevated Beamer has an administrator window in front, or under the pointer,
+    each window read once. Windows drops input to such a window silently, SendInput still saying
+    it was sent, so this is asked before sending rather than after a refusal. The window under the
+    pointer counts too: a click on an administrator window in the background is dropped the same
+    way, so it never comes to the front. Unknown elevation counts as yes: a standard account may
+    not read another account's process at all."""
     if _running_elevated():
         return False
-    hwnd = user32.GetForegroundWindow()
-    if not hwnd:
-        return False
-    if hwnd != _foreground_seen[0]:
-        blocker = foreground_blocker()
-        _foreground_seen[0], _foreground_seen[1] = hwnd, (
+    windows = {user32.GetForegroundWindow(), _window_under_pointer()} - {0, None}
+    return any(_is_administrator_window(hwnd) for hwnd in windows)
+
+
+def _window_under_pointer():
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(point)):
+        return None
+    hwnd = user32.WindowFromPoint(point)
+    # The top-level window, as the process and its elevation are the window's, not a child control's.
+    return user32.GetAncestor(hwnd, GA_ROOT) if hwnd else None
+
+
+def _is_administrator_window(hwnd) -> bool:
+    known = _administrator_windows.get(hwnd)
+    if known is None:
+        if len(_administrator_windows) > 64:
+            _administrator_windows.clear()
+        blocker = foreground_blocker(hwnd)
+        known = _administrator_windows[hwnd] = (
             blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS
             and blocker.pid not in (0, None, os.getpid()))
-        if _foreground_seen[1]:
-            LOGGER.info("An administrator window is in front (%s, class %r, elevated=%s); its input goes to the helper",
-                        blocker.process_name or "unknown", blocker.window_class, blocker.elevated)
-    return _foreground_seen[1]
+        if known:
+            LOGGER.info("An administrator window is in front or under the pointer (%s, class %r, elevated=%s); "
+                        "its input goes to the helper", blocker.process_name or "unknown", blocker.window_class,
+                        blocker.elevated)
+    if known:
+        _foreground_seen[0] = hwnd
+    return known
 
 
 @functools.lru_cache(maxsize=1)
