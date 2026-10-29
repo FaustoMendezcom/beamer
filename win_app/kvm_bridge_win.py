@@ -2159,6 +2159,11 @@ class WindowsApplication(QWidget):
         linked = {protocol.id_text(peer) for peer in self._peer_caps()}
         peer = next((ident for ident in sorted(shared) if ident in linked), None)
         if peer is None:
+            # A PC that shared these monitors before and is not linked now is most likely asleep: wake it.
+            asleep = next((ident for ident in sorted(shared) if protocol.read_id(ident) is not None), None)
+            if asleep is not None and self.sender.wake(protocol.read_id(asleep)):
+                LOGGER.info("Switch computer: %s is not connected; waking it", self._label_of(protocol.read_id(asleep)))
+                return
             self._on_alert(tr("Beamer"), tr("No monitor is shared with a connected PC. Run Beamer on the other "
                                             "PC wired to these monitors and pair it with this one."))
             return
