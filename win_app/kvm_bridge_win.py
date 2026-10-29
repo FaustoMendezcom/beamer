@@ -1165,11 +1165,23 @@ class WindowsApplication(QWidget):
         self.tray_switch.setEnabled(self.tray_available)
         self.tray_switch.toggled.connect(self._set_show_in_tray)
         module.body.addWidget(self.tray_switch)
+        self.start_in_tray_switch = widgets.Switch(tr("Start in the tray when Windows starts"))
+        self.start_in_tray_switch.setFont(theme.font(theme.TYPE["body"]))
+        self.start_in_tray_switch.setChecked(current.start_in_tray)
+        self.start_in_tray_switch.setEnabled(self.tray_available)
+        self.start_in_tray_switch.toggled.connect(self._set_start_in_tray)
+        module.body.addWidget(self.start_in_tray_switch)
         module.body.addWidget(widgets.label(
             tr("With it off, closing the window quits Beamer. Open Beamer again to bring the window back.")
             if self.tray_available else tr("This desktop has no system tray, so Beamer's window is all there is: closing it quits Beamer."),
             "note", wrap=True))
         return module
+
+    def _set_start_in_tray(self, enabled: bool) -> None:
+        if self._config is None:
+            return
+        self._config.start_in_tray = bool(enabled)
+        self._persist()
 
     def _set_show_in_tray(self, enabled: bool) -> None:
         if self._config is None:
@@ -5618,6 +5630,8 @@ class WindowsApplication(QWidget):
             box.blockSignals(True)
         try:
             self.tray_switch.setChecked(config.show_in_tray)
+            if hasattr(self, "start_in_tray_switch"):
+                self.start_in_tray_switch.setChecked(config.start_in_tray)
             self.tray.setVisible(self.tray_shown())
             self.pointer_switch.setChecked(config.hide_idle_pointer)
             self.dragging_switch.setChecked(config.block_while_dragging)
@@ -6335,6 +6349,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=default_config_path(), help="path to settings.json")
     parser.add_argument("--hidden", action="store_true", help="start in the tray without showing the window")
     parser.add_argument("--relaunched", action="store_true", help=argparse.SUPPRESS)
+    # Started as Windows starts, by the secure desktop service: the window follows "Start in the tray".
+    parser.add_argument("--at-sign-in", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--identify-x11", help=argparse.SUPPRESS)
     # Explorer's Send to → Beamer (other PC): the selected files, handed to the running Beamer.
     parser.add_argument("--send", nargs="*", help=argparse.SUPPRESS)
@@ -6595,9 +6611,17 @@ def main() -> None:
             QTimer.singleShot(5000, lambda: application.send_files([str(Path(path).resolve()) for path in sending]))
         if not instance_signal.listening:
             LOGGER.warning("Could not start the second-launch listener: %s", instance_signal.server.errorString())
-        if not arguments.hidden or not application.tray_shown():
+        hidden = arguments.hidden
+        # As Windows starts (the sign-in task's --hidden, or the service's --at-sign-in), "Start in
+        # the tray" decides; an admin relaunch keeps whatever the window was.
+        if getattr(arguments, "at_sign_in", False) or (arguments.hidden and not arguments.relaunched):
+            hidden = getattr(application._config, "start_in_tray", True)
+        hidden = hidden and application.tray_shown()
+        # Started once either way: after the first paint when the window shows, else at once.
+        application._start_after_first_paint = not hidden
+        if not hidden:
             application.show()
-        if arguments.hidden:
+        else:
             QTimer.singleShot(0, application.start)
         sys.exit(app.exec())
     finally:

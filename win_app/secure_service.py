@@ -299,7 +299,7 @@ def launch_user_beamer(session: int) -> None:
         startup = win32process.STARTUPINFO()
         startup.lpDesktop = "winsta0\\default"
         process, thread, _pid, _tid = win32process.CreateProcessAsUser(
-            token, exe, f'"{exe}"', None, None, False, win32process.CREATE_UNICODE_ENVIRONMENT,
+            token, exe, f'"{exe}" --at-sign-in', None, None, False, win32process.CREATE_UNICODE_ENVIRONMENT,
             environment, os.path.dirname(exe), startup)
         process.Close()
         thread.Close()

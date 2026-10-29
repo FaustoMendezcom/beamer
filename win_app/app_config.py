@@ -168,6 +168,9 @@ class Config:
     # The tray icon, one key on all three apps (the Mac's is the menu bar item). This machine's own
     # choice, never shared.
     show_in_tray: bool = True
+    # Started when Windows starts (the sign-in task, or the secure desktop service for a standard
+    # account): in the tray with no window. This machine's own choice, never shared.
+    start_in_tray: bool = True
     # Only the machine in use shows a pointer: this PC's while it drives another, and after a driver
     # lets go of it until it moves (core/idle_pointer). This machine's own choice, never shared.
     hide_idle_pointer: bool = True
@@ -276,6 +279,8 @@ def validate_config(config: Config) -> None:
         raise ConfigError("hold_full_screen must be true or false")
     if not isinstance(config.show_in_tray, bool):
         raise ConfigError("show_in_tray must be true or false")
+    if not isinstance(config.start_in_tray, bool):
+        raise ConfigError("start_in_tray must be true or false")
     if not isinstance(config.hide_idle_pointer, bool):
         raise ConfigError("hide_idle_pointer must be true or false")
     if not isinstance(config.home_shortcut, bool):
@@ -429,6 +434,7 @@ def config_from_dict(raw: dict) -> Config:
             block_while_dragging=raw.get("block_while_dragging", True),
             hold_full_screen=raw.get("hold_full_screen", False),
             show_in_tray=raw.get("show_in_tray", True),
+            start_in_tray=raw.get("start_in_tray", True),
             hide_idle_pointer=raw.get("hide_idle_pointer", True),
             home_shortcut=raw.get("home_shortcut", False),
             mac_hardware_address=raw.get("mac_hardware_address", "") or "",
@@ -515,6 +521,7 @@ def config_to_dict(config: Config) -> dict:
         "block_while_dragging": config.block_while_dragging,
         "hold_full_screen": config.hold_full_screen,
         "show_in_tray": config.show_in_tray,
+        "start_in_tray": config.start_in_tray,
         "hide_idle_pointer": config.hide_idle_pointer,
         "home_shortcut": config.home_shortcut,
         "mac_hardware_address": config.mac_hardware_address,

@@ -4475,6 +4475,10 @@ msgid "Show in tray"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "Start in the tray when Windows starts"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Keyboard and mouse"
 msgstr ""
 
