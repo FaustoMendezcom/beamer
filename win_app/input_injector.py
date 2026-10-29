@@ -138,6 +138,8 @@ def _send_input(*inputs: INPUT) -> None:
         raise RuntimeError("Win32 SendInput is only available on Windows")
     count = len(inputs)
     array = (INPUT * count)(*inputs)
+    if _administrator_window_in_front() and _to_administrator_window(array, count):
+        return
     ctypes.set_last_error(0)
     sent = user32.SendInput(count, array, ctypes.sizeof(INPUT))
     if sent != count and _to_secure_desktop(array, count):
@@ -149,8 +151,8 @@ def _send_input(*inputs: INPUT) -> None:
         # there where the installer allowed it (-ElevatedWindows), else it says no and this reports.
         # Unknown counts too: a standard account may not even read another account's process, which
         # is what an administrator window it was refused by usually is.
-        if (blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS and not is_elevated()
-                and _to_secure_desktop(array, count, default_desktop=True)):
+        if (blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS and not _running_elevated()
+                and _to_administrator_window(array, count)):
             return
         report_input_problem(blocker, operation="SendInput", error=error)
         if blocker.window_class == GAMEINPUT_WINDOW_CLASS:
@@ -159,6 +161,45 @@ def _send_input(*inputs: INPUT) -> None:
 
 
 _secure_client = None
+# The foreground window last looked at and whether it is an administrator window; and when the
+# helper last said no to one, after which it is asked again only after HELPER_RETRY_SECONDS.
+_foreground_seen = [None, False]
+_administrator_refused_at = [float("-inf")]
+HELPER_RETRY_SECONDS = 5.0
+
+
+def _administrator_window_in_front() -> bool:
+    """Whether an unelevated Beamer has an administrator window in front, read once per foreground
+    window. Windows drops input to such a window silently, SendInput still saying it was sent, so
+    this is asked before sending rather than after a refusal. Unknown elevation counts as yes: a
+    standard account may not read another account's process at all."""
+    if _running_elevated():
+        return False
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return False
+    if hwnd != _foreground_seen[0]:
+        blocker = foreground_blocker()
+        _foreground_seen[0], _foreground_seen[1] = hwnd, (
+            blocker.elevated is not False and blocker.window_class != GAMEINPUT_WINDOW_CLASS
+            and blocker.pid not in (0, None, os.getpid()))
+    return _foreground_seen[1]
+
+
+@functools.lru_cache(maxsize=1)
+def _running_elevated() -> bool:
+    return is_elevated()
+
+
+def _to_administrator_window(array, count: int) -> bool:
+    """The input through the helper, which types into administrator windows only where the
+    installer allowed it (-ElevatedWindows); after a no, ordinary sending for a while."""
+    if time.monotonic() - _administrator_refused_at[0] < HELPER_RETRY_SECONDS:
+        return False
+    if _to_secure_desktop(array, count, default_desktop=True):
+        return True
+    _administrator_refused_at[0] = time.monotonic()
+    return False
 
 
 def _secure():

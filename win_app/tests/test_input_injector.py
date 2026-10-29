@@ -523,3 +523,48 @@ class InjectTextTests(unittest.TestCase):
     def test_empty_text_sends_nothing(self):
         with mock.patch.object(input_injector, "_send_input", lambda *items: self.fail("nothing to send")):
             input_injector.inject_text("")
+
+
+class AdministratorWindowTests(unittest.TestCase):
+    """An unelevated Beamer with an administrator window in front: Windows drops its input there
+    while SendInput says it was sent, so the input goes to the helper first."""
+
+    def setUp(self):
+        self.sent, self.helped = [], []
+        self.helper_says = True
+        fake_user32 = mock.Mock()
+        fake_user32.GetForegroundWindow.return_value = 0x1234
+        fake_user32.SendInput.side_effect = lambda count, array, size: self.sent.append(count) or count
+        patches = [
+            mock.patch.object(input_injector, "user32", fake_user32),
+            mock.patch.object(input_injector, "_running_elevated", return_value=False),
+            mock.patch.object(input_injector, "foreground_blocker", return_value=mock.Mock(
+                elevated=True, window_class="ConsoleWindowClass", pid=4242)),
+            mock.patch.object(input_injector, "_to_secure_desktop",
+                              side_effect=lambda array, count, default_desktop=False:
+                              self.helped.append((count, default_desktop)) or self.helper_says),
+            mock.patch.object(input_injector, "_foreground_seen", [None, False]),
+            mock.patch.object(input_injector, "_administrator_refused_at", [float("-inf")]),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_its_input_goes_to_the_helper_not_to_sendinput(self):
+        input_injector._send_input(input_injector._mouse_input(1, 1, 0, input_injector.MOUSEEVENTF_MOVE))
+        self.assertEqual(self.helped, [(1, True)])
+        self.assertEqual(self.sent, [])
+
+    def test_a_helper_saying_no_falls_back_and_is_not_asked_again_at_once(self):
+        self.helper_says = False
+        move = input_injector._mouse_input(1, 1, 0, input_injector.MOUSEEVENTF_MOVE)
+        input_injector._send_input(move)
+        input_injector._send_input(move)
+        self.assertEqual(self.helped, [(1, True)])
+        self.assertEqual(self.sent, [1, 1])
+
+    def test_an_ordinary_window_is_sent_to_as_ever(self):
+        with mock.patch.object(input_injector, "foreground_blocker", return_value=mock.Mock(
+                elevated=False, window_class="Notepad", pid=4242)):
+            input_injector._send_input(input_injector._mouse_input(1, 1, 0, input_injector.MOUSEEVENTF_MOVE))
+        self.assertEqual((self.helped, self.sent), ([], [1]))
