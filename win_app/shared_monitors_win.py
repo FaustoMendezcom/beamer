@@ -46,6 +46,9 @@ class SharedMonitors:
         self._display_count = 0              # every display, identified or not
         self._showing: Dict[str, bool] = {}  # monitor id: whether it shows this PC
         self._disagreeing: Dict[str, int] = {}  # monitor id: reads in a row against _showing
+        # Whether the monitors have been read once: until then what they show is not known, and
+        # nothing about the picture may be concluded from it.
+        self.polled = False
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -110,6 +113,7 @@ class SharedMonitors:
                     learned = True
             after = (self._away_locked(), dict(self._codes), [m.key for m in self._monitors])
             codes = dict(self._codes)
+            self.polled = True
         if learned:
             self._learned(codes)
         if before != after:

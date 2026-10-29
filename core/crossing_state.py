@@ -130,6 +130,7 @@ def drop(settings, tiles, moved, *, platform, capable, live, gone, now, snap_rad
     saved["layout"] = {**{peer: copy.deepcopy(tile) for peer, tile in held.items() if peer in shelf},
                        **active}
     _stamp(saved, now)
+    _keep_dragged_home(saved, moved)
     entry = ways._entry(saved, moved)
     own = saved["layout"].get(saved.get("machine_id"))
     if entry is not None and moved not in capable and own is not None and moved in saved["layout"]:
@@ -142,6 +143,22 @@ def drop(settings, tiles, moved, *, platform, capable, live, gone, now, snap_rad
     result = _compile(saved, platform, capable=capable, live=live, gone=gone, now=now)
     saved = result["settings"]
     return _outcome(settings, saved, result, tell=_tells(settings, saved, sides=True), send_picture=True)
+
+
+def _keep_dragged_home(saved, moved):
+    """This machine's own tile dragged on its map while its shared monitors are home becomes the
+    place it keeps for them (shared_monitors_moved's `kept`): the only way that place changes."""
+    own = saved.get("machine_id", "")
+    held = saved.get(shared_monitors.SETTINGS_KEY)
+    if moved != own or not isinstance(held, dict) or not isinstance(held.get("kept"), dict) \
+            or isinstance(held.get("home"), dict):
+        return
+    tile = saved["layout"].get(own)
+    if isinstance(tile, dict):
+        held = copy.deepcopy(held)
+        held["kept"] = dict({key: tile[key] for key in ("x", "y", "w", "h") if key in tile},
+                            peer=held["kept"].get("peer"))
+        saved[shared_monitors.SETTINGS_KEY] = held
 
 
 def edit_ways(settings, peer, *, platform, edge=None, thirds=None, edges=None, corners=None,
@@ -333,9 +350,10 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
     before the move can arrive after it, stamped later, and undo it.
 
     The tile it came home to is kept (`kept`), as the place it holds with every display: a picture
-    from another machine that moves or shrinks it while home is put right, and the next move away
-    starts from it rather than from whatever the picture then holds. A change this machine made
-    itself (its own Crossing page) becomes the kept place instead."""
+    that moves or shrinks it while home is put right, and the next move away starts from it rather
+    than from whatever the picture then holds. Only dragging this machine's own tile on its map
+    (drop) changes the kept place: a picture this machine wrote itself is no sign of a choice, as
+    its own away layout, read before it knows the monitors are away, showed."""
     saved = _initial(settings, capable)
     own = saved.get("machine_id", "")
     held = saved.get(shared_monitors.SETTINGS_KEY)
@@ -383,13 +401,9 @@ def shared_monitors_moved(settings, *, platform, peer, away_keys, own_displays, 
         moved = True
     elif not away_keys and kept is not None and isinstance(tile, dict) and all_displays and \
             any(tile.get(key) != kept.get(key) for key in place):
-        if saved.get("layout_by") == own:
-            held["kept"] = dict({key: tile[key] for key in place if key in tile}, peer=kept.get("peer", peer))
-            saved[shared_monitors.SETTINGS_KEY] = held
-        else:
-            saved["layout"] = shared_monitors.home_layout(saved["layout"], own, kept.get("peer", peer), kept,
-                                                          _stored_displays(all_displays))
-            moved = True
+        saved["layout"] = shared_monitors.home_layout(saved["layout"], own, kept.get("peer", peer), kept,
+                                                      _stored_displays(all_displays))
+        moved = True
     if moved:
         saved[shared_monitors.SETTINGS_KEY] = held
         _stamp(saved, time.time() if now is None else now)

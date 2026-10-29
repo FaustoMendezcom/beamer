@@ -228,17 +228,33 @@ class PictureTests(unittest.TestCase):
         self.assertEqual({key: leave["settings"]["layout"][PC1][key] for key in "xywh"},
                          {"x": 217, "y": -90, "w": 215, "h": 90})
 
-    def test_moving_its_own_tile_here_becomes_the_kept_place(self):
+    def test_its_own_away_picture_while_home_is_put_right_not_kept(self):
+        # Just after a start, before the monitors are read: the picture this PC wrote while they were
+        # away is still there, stamped by this PC itself. It is no choice, and the kept place stands.
+        away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
+                                                   own_displays=None, now=200)["settings"]
+        back = crossing_state.shared_monitors_moved(away, platform="pc", peer=PC2, away_keys=[],
+                                                   own_displays=PC1_DISPLAYS, now=300)["settings"]
+        own_stale = dict(back, layout_by=PC1,
+                         layout={**back["layout"], PC1: {**back["layout"][PC1], "x": 217, "w": 215, "h": 90}})
+        out = crossing_state.shared_monitors_moved(own_stale, platform="pc", peer=PC2, away_keys=[],
+                                                  own_displays=PC1_DISPLAYS, now=400, all_displays=PC1_DISPLAYS)
+        self.assertTrue(out["send_picture"])
+        self.assertEqual({key: out["settings"]["layout"][PC1][key] for key in "xywh"},
+                         {"x": 2, "y": -90, "w": 430, "h": 180})
+        self.assertEqual(out["settings"]["shared_monitors"]["kept"]["w"], 430)
+
+    def test_dragging_its_own_tile_while_home_becomes_the_kept_place(self):
         away = crossing_state.shared_monitors_moved(self.settings(), platform="pc", peer=PC2, away_keys=["0", "1"],
                                                    own_displays=None, now=200)["settings"]
         back = crossing_state.shared_monitors_moved(away, platform="pc", peer=PC2, away_keys=[],
                                                    own_displays=PC1_DISPLAYS, now=300)["settings"]
         dragged = dict(back, layout={**back["layout"], PC1: {**back["layout"][PC1], "y": -60}})
-        out = crossing_state.shared_monitors_moved(dragged, platform="pc", peer=PC2, away_keys=[],
-                                                  own_displays=PC1_DISPLAYS, now=400, all_displays=PC1_DISPLAYS)
-        self.assertFalse(out["send_picture"])
-        self.assertEqual(out["settings"]["layout"][PC1]["y"], -60)
-        self.assertEqual(out["settings"]["shared_monitors"]["kept"]["y"], -60)
+        crossing_state._keep_dragged_home(dragged, PC1)
+        self.assertEqual(dragged["shared_monitors"]["kept"]["y"], -60)
+        other = dict(back, layout={**back["layout"], PC2: {**back["layout"][PC2], "y": 300}})
+        crossing_state._keep_dragged_home(other, PC2)
+        self.assertEqual(other["shared_monitors"]["kept"]["y"], -90)
 
     def test_going_away_twice_keeps_the_first_home(self):
         held = self.settings()

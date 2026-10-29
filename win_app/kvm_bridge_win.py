@@ -2182,7 +2182,7 @@ class WindowsApplication(QWidget):
     def _check_monitors_picture(self) -> None:
         """Every few seconds: the picture still matches what the shared monitors show (a picture from
         another machine, stamped later but built before the last move, can arrive after it)."""
-        if self.shared_monitors is None or self._config is None or self._closing:
+        if self.shared_monitors is None or self._config is None or self._closing                 or not getattr(self.shared_monitors, "polled", True):
             return
         try:
             if self.shared_monitors.moves_picture() and self._move_monitors_picture(self._monitors_away, repair=True):
