@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -99,6 +100,29 @@ class SendToHandOffTests(unittest.TestCase):
     def test_an_activation_still_shows_the_window(self):
         self.assertEqual(self.read({"activation_token": ""}), ([], [None]))
 
+
+class OtherAccountTests(unittest.TestCase):
+    """A standard user who elevated Beamer with an administrator's credentials: its folders and the
+    files it may send are that user's, not the administrator's."""
+
+    def test_the_signed_in_users_folders_are_used(self):
+        import shell_folder_win
+
+        user = ("S-1-5-21-1-2-3-1001", r"C:\Users\worker")
+        with unittest.mock.patch.object(shell_folder_win, "session_user", return_value=user), \
+                unittest.mock.patch("winreg.OpenKey", side_effect=OSError):
+            self.assertEqual(shell_folder_win.known_folder(shell_folder_win.DOWNLOADS), r"C:\Users\worker\Downloads")
+            self.assertEqual(shell_folder_win.received_folder(), r"C:\Users\worker\Downloads\Beamer")
+            self.assertTrue(shell_folder_win.known_folder(shell_folder_win.SEND_TO).startswith(r"C:\Users\worker"))
+
+    def test_only_that_users_own_files_and_folders_count(self):
+        import user_access_win
+
+        with unittest.mock.patch.object(user_access_win, "_other_account_profile", return_value=r"C:\Users\worker"):
+            self.assertTrue(user_access_win.can_read(r"C:\Users\worker\Documents\a.txt"))
+            self.assertTrue(user_access_win.can_add_to(r"C:\Users\worker\Desktop"))
+            self.assertFalse(user_access_win.can_read(r"C:\Users\admin\secret.txt"))
+            self.assertFalse(user_access_win.can_add_to(r"C:\Windows\System32"))
 
 if __name__ == "__main__":
     unittest.main()

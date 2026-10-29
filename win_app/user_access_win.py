@@ -48,8 +48,36 @@ def _user_token():
     return _token
 
 
+def _other_account_profile() -> Optional[str]:
+    """The signed-in user's profile when Beamer runs as another account (elevated with an
+    administrator's credentials): then this process's linked token is the administrator's, which
+    says nothing of the signed-in user's rights."""
+    try:
+        import shell_folder_win
+
+        user = shell_folder_win.session_user()
+    except Exception:
+        return None
+    return user[1] if user else None
+
+
+def _inside(path: str, folder: str) -> bool:
+    import os
+
+    try:
+        return os.path.commonpath([os.path.realpath(path).lower(), os.path.realpath(folder).lower()]) \
+            == os.path.realpath(folder).lower()
+    except ValueError:
+        return False
+
+
 def allowed(path: str, access: int) -> bool:
-    """Whether the user's unelevated account has `access` to `path`. False when it cannot be told."""
+    """Whether the signed-in user's unelevated account has `access` to `path`. Beamer running as
+    another account cannot ask Windows for that user's rights, so it holds to that user's own
+    profile folder instead. False when it cannot be told."""
+    profile = _other_account_profile()
+    if profile is not None:
+        return _inside(path, profile)
     try:
         token = _user_token()
     except Exception:

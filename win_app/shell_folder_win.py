@@ -2,6 +2,7 @@
 under a point, else Downloads\\Beamer; and the Send to entry that hands files to Beamer."""
 
 import ctypes
+import functools
 import logging
 import os
 import sys
@@ -31,8 +32,76 @@ else:
     user32 = None
 
 
+# User Shell Folders value names, for reading another account's folders from its registry hive.
+_SHELL_FOLDER_VALUES = {DESKTOP: "Desktop", DOWNLOADS: "{374DE290-123F-4565-9164-39C4925E467B}", SEND_TO: "SendTo"}
+
+
+def _sid_of_token() -> str:
+    import win32api
+    import win32security
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
+    return win32security.ConvertSidToStringSid(win32security.GetTokenInformation(token, win32security.TokenUser)[0])
+
+
+@functools.lru_cache(maxsize=1)
+def session_user() -> Optional[tuple]:
+    """(SID, profile folder) of whoever is signed in to this session, when that is not the account
+    Beamer runs as: a standard user who elevated Beamer with an administrator's credentials. Then
+    "Downloads" and "Send to" are that user's, not the administrator's. None otherwise."""
+    if user32 is None:
+        return None
+    try:
+        import win32security
+        import win32ts
+        import winreg
+
+        session = win32ts.WTS_CURRENT_SESSION
+        name = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSUserName)
+        domain = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSDomainName)
+        if not name:
+            return None
+        sid = win32security.ConvertSidToStringSid(win32security.LookupAccountName(domain or None, name)[0])
+        if sid == _sid_of_token():
+            return None
+        key = rf"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{sid}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as profile:
+            path = os.path.expandvars(winreg.QueryValueEx(profile, "ProfileImagePath")[0])
+        return sid, path
+    except Exception:
+        LOGGER.exception("Could not tell who is signed in to this session")
+        return None
+
+
+def _session_user_folder(name: str, user: tuple) -> Optional[str]:
+    import winreg
+
+    sid, profile = user
+    try:
+        with winreg.OpenKey(winreg.HKEY_USERS,
+                            rf"{sid}\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            value = str(winreg.QueryValueEx(key, _SHELL_FOLDER_VALUES[name])[0])
+    except OSError:
+        fallback = {DESKTOP: "Desktop", DOWNLOADS: "Downloads",
+                    SEND_TO: os.path.join("AppData", "Roaming", "Microsoft", "Windows", "SendTo")}[name]
+        return os.path.join(profile, fallback)
+    for variable in ("%USERPROFILE%", "%HOMEPATH%"):
+        if variable in value.upper():
+            start = value.upper().index(variable)
+            value = value[:start] + profile + value[start + len(variable):]
+    appdata = os.path.join(profile, "AppData", "Roaming")
+    value = value.replace("%APPDATA%", appdata).replace("%appdata%", appdata)
+    return os.path.expandvars(value)
+
+
 def known_folder(name: str) -> str:
-    """"Desktop", "Downloads" or "SendTo" for this user."""
+    """"Desktop", "Downloads" or "SendTo" for the user signed in to this session, which is the
+    account Beamer runs as unless an administrator's credentials elevated it."""
+    user = session_user()
+    if user is not None:
+        folder = _session_user_folder(name, user)
+        if folder:
+            return folder
     try:
         from win32com.shell import shell, shellcon
 

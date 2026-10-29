@@ -4917,6 +4917,11 @@ msgid "Sending {label} to {name}."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+#, python-brace-format
+msgid "The monitors did not switch to {name}."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Starts in the tray when you sign in, as administrator."
 msgstr ""
 
@@ -4970,11 +4975,6 @@ msgstr ""
 #: win_app/kvm_bridge_win.py
 #, python-brace-format
 msgid "Could not save this PC's name: {error}"
-msgstr ""
-
-#: win_app/kvm_bridge_win.py
-#, python-brace-format
-msgid "The monitors did not switch to {name}."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
