@@ -16,8 +16,13 @@ import secure_input
 LOGGER = logging.getLogger(__name__)
 PIPE_BUFFER = 64 * 1024
 PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
-# SYSTEM full; interactive users read and write. Who may actually use it is checked per client.
-PIPE_SDDL = "D:P(A;;GA;;;SY)(A;;GRGW;;;IU)"
+FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
+# One serving, one waiting, so the name stays held while a client is dealt with.
+PIPE_INSTANCES = 2
+# SYSTEM full; interactive users only read and write data (FILE_GENERIC_READ | FILE_WRITE_DATA),
+# never FILE_CREATE_PIPE_INSTANCE, which GENERIC_WRITE would include and which would let any
+# program add its own instance of this pipe. Who may actually use it is checked per client.
+PIPE_SDDL = "D:P(A;;GA;;;SY)(A;;0x0012008B;;;IU)"
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 TOKEN_QUERY = 0x0008
 TOKEN_ELEVATION = 20
@@ -90,12 +95,23 @@ class _Desktop:
 
 
 def _sas() -> bool:
+    """Asks the service for Ctrl+Alt+Del: Windows takes SendSAS only from a service."""
+    import pywintypes
+    import win32event
+
+    import secure_service
+
     try:
-        ctypes.WinDLL("sas").SendSAS(False)
-        return True
-    except OSError:
-        LOGGER.exception("Could not send Ctrl+Alt+Del")
+        event = win32event.OpenEvent(win32event.EVENT_MODIFY_STATE, False, secure_service.SAS_EVENT)
+    except pywintypes.error:
+        LOGGER.exception("Could not reach the service for Ctrl+Alt+Del")
         return False
+    try:
+        win32event.SetEvent(event)
+        LOGGER.info("Asked the service for Ctrl+Alt+Del")
+        return True
+    finally:
+        event.Close()
 
 
 def _client_info(pipe) -> dict:
@@ -130,6 +146,10 @@ def allowed_client() -> Optional[str]:
         return None
 
 
+class PipeTaken(OSError):
+    """Another program already holds this pipe name: it may be posing as the helper."""
+
+
 def serve_forever(session: Optional[int] = None) -> None:
     import input_injector
     import pywintypes
@@ -144,24 +164,39 @@ def serve_forever(session: Optional[int] = None) -> None:
     attributes.SECURITY_DESCRIPTOR = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
         PIPE_SDDL, win32security.SDDL_REVISION_1)
     name = secure_input.pipe_name(session)
+
+    def instance(first: bool):
+        flags = win32pipe.PIPE_ACCESS_DUPLEX | (FILE_FLAG_FIRST_PIPE_INSTANCE if first else 0)
+        try:
+            return win32pipe.CreateNamedPipe(
+                name, flags,
+                win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_INSTANCES, PIPE_BUFFER, PIPE_BUFFER, 0, attributes)
+        except pywintypes.error as exc:
+            raise PipeTaken(f"{name} could not be created ({exc.strerror})") from None
+
+    # The first instance claims the name: if any other program made it first, this fails rather
+    # than share it. From then on the next instance is made before the current one closes, so the
+    # name is never free for another program to take between clients.
+    pipe = instance(first=True)
     LOGGER.info("Secure desktop helper serving %s", name)
     while True:
-        pipe = win32pipe.CreateNamedPipe(
-            name, win32pipe.PIPE_ACCESS_DUPLEX,
-            win32pipe.PIPE_TYPE_BYTE | win32pipe.PIPE_READMODE_BYTE | win32pipe.PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            1, PIPE_BUFFER, PIPE_BUFFER, 0, attributes)
+        spare = None
         try:
             win32pipe.ConnectNamedPipe(pipe, None)
+            spare = instance(first=False)
             info = _client_info(pipe)
             allowed, why = secure_input.client_allowed(info, allowed_client(), session)
             if not allowed:
                 LOGGER.warning("Refused %s (pid %s): %s", info.get("path"), info.get("pid"), why)
                 _read_message(pipe)
                 win32file.WriteFile(pipe, secure_input.answer(secure_input.REFUSED, why))
-                continue
-            while True:
-                kind, payload = _read_message(pipe)
-                win32file.WriteFile(pipe, helper.handle(kind, payload))
+            else:
+                while True:
+                    kind, payload = _read_message(pipe)
+                    win32file.WriteFile(pipe, helper.handle(kind, payload))
+        except PipeTaken:
+            raise
         except (pywintypes.error, secure_input.FrameError, OSError) as exc:
             LOGGER.info("Secure desktop client gone: %s", exc)
         finally:
@@ -172,6 +207,8 @@ def serve_forever(session: Optional[int] = None) -> None:
             except pywintypes.error:
                 pass
             win32file.CloseHandle(pipe)
+            # In the finally, so a refusal or a gone client still moves on to the waiting instance.
+            pipe = spare if spare is not None else instance(first=False)
 
 
 def _read_message(pipe):
@@ -195,6 +232,9 @@ def main() -> int:
         return 2
     try:
         serve_forever()
+    except PipeTaken as exc:
+        LOGGER.error("Not serving: %s. Another program may be posing as the helper; Beamer will not use it.", exc)
+        return 3
     except Exception:
         LOGGER.exception("The secure desktop helper stopped")
         return 1

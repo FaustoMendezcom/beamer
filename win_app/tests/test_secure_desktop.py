@@ -16,6 +16,7 @@ import secure_service  # noqa: E402
 
 SIZE = ctypes.sizeof(input_injector.INPUT)
 ALLOWED = r"C:\Users\fm\AppData\Local\Beamer\Beamer.exe"
+SERVICE = r"C:\Program Files\Beamer\BeamerSecure.exe"
 
 
 class FramingTests(unittest.TestCase):
@@ -95,7 +96,8 @@ class ClientTests(unittest.TestCase):
 
     def test_no_helper_is_asked_again_only_after_a_while(self):
         opened, now = [], [0.0]
-        client = secure_input.Client(1, opener=lambda name: opened.append(name), clock=lambda: now[0])
+        client = secure_input.Client(1, opener=lambda name, exe, session: opened.append(name), clock=lambda: now[0],
+                                     installation=lambda: (ALLOWED, SERVICE))
         self.assertFalse(client.sas())
         self.assertFalse(client.sas())
         now[0] = secure_input.RETRY_SECONDS + 1
@@ -104,17 +106,49 @@ class ClientTests(unittest.TestCase):
 
     def test_a_refusal_closes_and_is_remembered(self):
         pipe = self.Pipe([secure_input.answer(secure_input.REFUSED, "Beamer is not running as administrator")])
-        client = secure_input.Client(1, opener=lambda name: pipe, clock=lambda: 0.0)
+        client = secure_input.Client(1, opener=lambda name, exe, session: pipe, clock=lambda: 0.0, installation=lambda: (ALLOWED, SERVICE))
         self.assertFalse(client.send_inputs(b"r" * SIZE, SIZE))
         self.assertTrue(pipe.closed)
         self.assertIn("administrator", client.refused)
 
     def test_accepted_input_keeps_the_pipe(self):
         pipe = self.Pipe([secure_input.answer(secure_input.OK)] * 2)
-        client = secure_input.Client(1, opener=lambda name: pipe, clock=lambda: 0.0)
+        client = secure_input.Client(1, opener=lambda name, exe, session: pipe, clock=lambda: 0.0, installation=lambda: (ALLOWED, SERVICE))
         self.assertTrue(client.send_inputs(b"r" * SIZE, SIZE))
         self.assertTrue(client.sas())
         self.assertFalse(pipe.closed)
+
+
+class ServerCheckTests(unittest.TestCase):
+    """Beamer writes nothing to a pipe until it knows the installed helper serves it: any program
+    could make a pipe of that name first and read the passwords typed on the secure desktop."""
+
+    def info(self, **fields):
+        return {"sid": secure_input.SYSTEM_SID, "path": SERVICE, "session": 1, **fields}
+
+    def test_only_system_running_the_installed_exe_in_this_session(self):
+        self.assertEqual(secure_input.server_trusted(self.info(path=SERVICE.upper()), SERVICE, 1), (True, ""))
+        for info in (self.info(sid="S-1-5-21-1-2-3-1001"), self.info(sid=None),
+                     self.info(path=r"C:\Users\evil\squat.exe"), self.info(path=None), self.info(session=3)):
+            with self.subTest(info=info):
+                self.assertFalse(secure_input.server_trusted(info, SERVICE, 1)[0])
+        self.assertFalse(secure_input.server_trusted(self.info(), None, 1)[0])
+
+    def test_not_installed_no_pipe_is_ever_opened(self):
+        opened = []
+        client = secure_input.Client(1, opener=lambda *args: opened.append(args), clock=lambda: 0.0,
+                                     installation=lambda: None)
+        self.assertFalse(client.available())
+        self.assertFalse(client.sas())
+        self.assertFalse(client.send_inputs(b"r" * SIZE, SIZE))
+        self.assertEqual(opened, [])
+
+    def test_the_installed_exe_is_what_the_server_is_held_to(self):
+        seen = []
+        client = secure_input.Client(1, opener=lambda name, exe, session: seen.append((exe, session)),
+                                     clock=lambda: 0.0, installation=lambda: (ALLOWED, SERVICE))
+        client.sas()
+        self.assertEqual(seen, [(SERVICE, 1)])
 
 
 class SupervisorTests(unittest.TestCase):
@@ -232,7 +266,7 @@ class LockedMachineTests(unittest.TestCase):
             def close(self):
                 pass
 
-        client = secure_input.Client(1, opener=lambda name: Pipe(), clock=lambda: now[0])
+        client = secure_input.Client(1, opener=lambda name, exe, session: Pipe(), clock=lambda: now[0], installation=lambda: (ALLOWED, SERVICE))
         self.assertTrue(client.available())
         self.assertTrue(client.available())
         now[0] = secure_input.RETRY_SECONDS + 1

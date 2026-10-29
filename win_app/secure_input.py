@@ -27,6 +27,14 @@ MAX_PAYLOAD = 64 * 1024
 PIPE_PREFIX = r"\\.\pipe\BeamerSecureInput-"
 REGISTRY_KEY = r"SOFTWARE\Beamer\SecureDesktop"
 ALLOWED_CLIENT_VALUE = "AllowedClient"
+SERVICE_EXE_VALUE = "ServiceExe"
+SYSTEM_SID = "S-1-5-18"
+# CreateFile: the server may identify this client but never act as it (no impersonation).
+SECURITY_SQOS_PRESENT = 0x00100000
+SECURITY_IDENTIFICATION = 0x00010000
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+FILE_WRITE_DATA = 0x0002
+TOKEN_QUERY = 0x0008
 CONNECT_TIMEOUT_MS = 200
 # A refused or missing helper is asked again only after this, so input on the secure desktop does
 # not wait on a pipe that is not there for every key.
@@ -93,14 +101,47 @@ def client_allowed(info: dict, allowed_path: Optional[str], session: int) -> Tup
     return True, ""
 
 
-class Client:
-    """Beamer's end: forwards input for the secure desktop to the helper, one message at a time."""
+def server_trusted(info: dict, expected_path: Optional[str], session: int) -> Tuple[bool, str]:
+    """Whether the process serving the pipe is the installed helper: SYSTEM, the service's own exe
+    under Program Files (as the installer wrote it, under HKLM), in this session. Checked before a
+    single byte is written, as any program could create a pipe of that name first and read the
+    passwords typed on the secure desktop. (trusted, why not)."""
+    if info.get("sid") != SYSTEM_SID:
+        return False, f"the pipe is served by {info.get('sid') or 'an unknown account'}, not SYSTEM"
+    path = (info.get("path") or "").lower()
+    if not expected_path or path != expected_path.lower():
+        return False, f"the pipe is served by {info.get('path') or 'an unknown program'}"
+    if info.get("session") != session:
+        return False, "the pipe is served from another session"
+    return True, ""
 
-    def __init__(self, session: Optional[int] = None, opener=None, clock=None):
+
+def installed() -> Optional[Tuple[str, str]]:
+    """(allowed client, service exe) from the key only an administrator can write, when the secure
+    desktop service is installed; else None, and Beamer never opens the pipe at all."""
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEY) as key:
+            client = str(winreg.QueryValueEx(key, ALLOWED_CLIENT_VALUE)[0])
+            service = str(winreg.QueryValueEx(key, SERVICE_EXE_VALUE)[0])
+    except OSError:
+        return None
+    return (client, service) if client and service else None
+
+
+class Client:
+    """Beamer's end: forwards input for the secure desktop to the helper, one message at a time,
+    only to a helper it has checked (server_trusted)."""
+
+    def __init__(self, session: Optional[int] = None, opener=None, clock=None, installation=None):
         import time
 
         self._session = session
         self._opener = opener or _open_pipe
+        self._installation = installation or installed
         self._clock = clock or time.monotonic
         self._lock = threading.Lock()
         self._handle = None
@@ -113,8 +154,13 @@ class Client:
             return self._handle
         if self._failed_at is not None and self._clock() - self._failed_at < RETRY_SECONDS:
             return None
+        found = self._installation()
+        if found is None:
+            # Not installed: no pipe is opened, so no program can stand in for the helper.
+            self._failed_at = self._clock()
+            return None
         session = self._session if self._session is not None else current_session()
-        self._handle = self._opener(pipe_name(session))
+        self._handle = self._opener(pipe_name(session), found[1], session)
         if self._handle is None:
             self._failed_at = self._clock()
         return self._handle
@@ -200,8 +246,33 @@ class _PipeFile:
         win32file.CloseHandle(self._handle)
 
 
-def _open_pipe(name: str):
-    """The helper's pipe, or None when no helper listens (not installed, or between sessions)."""
+def server_info(handle) -> dict:
+    """Account, image path and session of the process serving pipe `handle`."""
+    import win32api
+    import win32pipe
+    import win32security
+
+    pid = win32pipe.GetNamedPipeServerProcessId(handle)
+    session = ctypes.c_ulong()
+    ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(session))
+    info = {"pid": pid, "session": int(session.value), "path": None, "sid": None}
+    process = win32api.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    try:
+        size = ctypes.c_ulong(1024)
+        path = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.QueryFullProcessImageNameW(int(process), 0, path, ctypes.byref(size)):
+            info["path"] = path.value
+        token = win32security.OpenProcessToken(process, TOKEN_QUERY)
+        sid, _attributes = win32security.GetTokenInformation(token, win32security.TokenUser)
+        info["sid"] = win32security.ConvertSidToStringSid(sid)
+    finally:
+        win32api.CloseHandle(process)
+    return info
+
+
+def _open_pipe(name: str, expected_path: str, session: int):
+    """The helper's pipe, once its server is checked, or None: no helper listening, or a server
+    that is not the installed helper (nothing is written to that one)."""
     if sys.platform != "win32":
         return None
     try:
@@ -213,10 +284,23 @@ def _open_pipe(name: str):
             win32pipe.WaitNamedPipe(name, CONNECT_TIMEOUT_MS)
         except pywintypes.error:
             return None
-        handle = win32file.CreateFile(name, win32file.GENERIC_READ | win32file.GENERIC_WRITE, 0, None,
-                                      win32file.OPEN_EXISTING, 0, None)
-        win32pipe.SetNamedPipeHandleState(handle, win32pipe.PIPE_READMODE_BYTE, None, None)
-        return _PipeFile(handle)
+        handle = win32file.CreateFile(name, win32file.GENERIC_READ | FILE_WRITE_DATA, 0, None,
+                                      win32file.OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                                      None)
     except Exception:
         LOGGER.info("No secure desktop helper at %s", name)
         return None
+    try:
+        info = server_info(handle)
+        trusted, why = server_trusted(info, expected_path, session)
+    except Exception as exc:
+        trusted, why = False, f"its server could not be checked ({exc})"
+    if not trusted:
+        LOGGER.warning("Not using %s: %s", name, why)
+        win32file.CloseHandle(handle)
+        return None
+    try:
+        win32pipe.SetNamedPipeHandleState(handle, win32pipe.PIPE_READMODE_BYTE, None, None)
+    except Exception:
+        pass
+    return _PipeFile(handle)

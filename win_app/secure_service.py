@@ -19,6 +19,10 @@ CHECK_SECONDS = 2.0
 NO_SESSION = 0xFFFFFFFF
 # winnt.h; pywin32 does not name it. Needed to move the duplicated token into the user's session.
 TOKEN_ADJUST_SESSIONID = 0x0100
+# Windows lets only a service send Ctrl+Alt+Del (SendSAS), so the helper, which is not one, sets
+# this event and the service sends it. SYSTEM alone may open it.
+SAS_EVENT = r"Global\BeamerSecureDesktopSAS"
+SAS_EVENT_SDDL = "D:P(A;;GA;;;SY)"
 LOG_FOLDER = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "Beamer")
 
 
@@ -83,6 +87,27 @@ def launch_helper(session: int):
     return process
 
 
+def send_sas() -> None:
+    import ctypes
+
+    try:
+        ctypes.WinDLL("sas").SendSAS(False)
+        LOGGER.info("Sent Ctrl+Alt+Del")
+    except OSError:
+        LOGGER.exception("Could not send Ctrl+Alt+Del")
+
+
+def sas_event():
+    """The event the helper sets for Ctrl+Alt+Del, made by the service for SYSTEM only."""
+    import win32event
+    import win32security
+
+    attributes = win32security.SECURITY_ATTRIBUTES()
+    attributes.SECURITY_DESCRIPTOR = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+        SAS_EVENT_SDDL, win32security.SDDL_REVISION_1)
+    return win32event.CreateEvent(attributes, False, False, SAS_EVENT)
+
+
 def process_alive(process) -> bool:
     import win32con
     import win32event
@@ -136,8 +161,16 @@ def run_service() -> None:
 
         def SvcDoRun(self):
             supervisor = Supervisor(console_session, launch_helper, process_alive, stop_process)
+            sas = sas_event()
             LOGGER.info("%s running", SERVICE_NAME)
-            while win32event.WaitForSingleObject(self.stop_event, int(CHECK_SECONDS * 1000)) == win32event.WAIT_TIMEOUT:
+            supervisor.check()
+            while True:
+                woke = win32event.WaitForMultipleObjects([self.stop_event, sas], False, int(CHECK_SECONDS * 1000))
+                if woke == win32event.WAIT_OBJECT_0:
+                    break
+                if woke == win32event.WAIT_OBJECT_0 + 1:
+                    send_sas()
+                    continue
                 supervisor.check()
             supervisor.shutdown()
             LOGGER.info("%s stopped", SERVICE_NAME)

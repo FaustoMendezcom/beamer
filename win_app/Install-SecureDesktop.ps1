@@ -78,6 +78,8 @@ Copy-WhenFree $ClientPath $ServiceExe
 
 New-Item -Path $KeyPath -Force | Out-Null
 Set-ItemProperty -Path $KeyPath -Name 'AllowedClient' -Value $ClientPath -Type String
+# Beamer checks the pipe is served by this exe, as SYSTEM, before writing anything to it.
+Set-ItemProperty -Path $KeyPath -Name 'ServiceExe' -Value $ServiceExe -Type String
 
 # Services may send Ctrl+Alt+Del (1), alongside Ease of Access apps where that was allowed (2 -> 3).
 # What it was is kept, so -Remove puts it back.
