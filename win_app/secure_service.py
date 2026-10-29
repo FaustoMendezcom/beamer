@@ -17,6 +17,8 @@ DESCRIPTION = ("Lets Beamer, running as administrator, type on the secure deskto
                "lock screen and Ctrl+Alt+Del.")
 CHECK_SECONDS = 2.0
 NO_SESSION = 0xFFFFFFFF
+# winnt.h; pywin32 does not name it. Needed to move the duplicated token into the user's session.
+TOKEN_ADJUST_SESSIONID = 0x0100
 LOG_FOLDER = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), "Beamer")
 
 
@@ -66,7 +68,7 @@ def launch_helper(session: int):
     import win32security
 
     flags = (win32security.TOKEN_DUPLICATE | win32security.TOKEN_ASSIGN_PRIMARY | win32security.TOKEN_QUERY
-             | win32security.TOKEN_ADJUST_SESSIONID | win32security.TOKEN_ADJUST_DEFAULT)
+             | TOKEN_ADJUST_SESSIONID | win32security.TOKEN_ADJUST_DEFAULT)
     own = win32security.OpenProcessToken(win32process.GetCurrentProcess(), flags)
     token = win32security.DuplicateTokenEx(own, win32security.SecurityImpersonation, flags,
                                            win32security.TokenPrimary, None)

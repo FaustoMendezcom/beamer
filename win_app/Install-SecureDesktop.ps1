@@ -26,8 +26,23 @@ function Stop-BeamerSecure {
         Stop-Service -Name $ServiceName -Force
         $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(15))
     }
-    # The helper it started may outlive it for a moment.
-    Get-Process -Name 'BeamerSecure' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # The helper it started, and the exe's own launcher process, may outlive it for a moment.
+    $left = @(Get-Process -Name 'BeamerSecure' -ErrorAction SilentlyContinue)
+    $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    $left | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+}
+
+function Copy-WhenFree([string]$From, [string]$To) {
+    # The exe stays locked a moment after its processes have gone.
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $From -Destination $To -Force -ErrorAction Stop
+            return
+        } catch [System.IO.IOException] {
+            if ($attempt -ge 20) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 }
 
 if ($Remove) {
@@ -59,7 +74,7 @@ if (-not (Test-Path -LiteralPath $ClientPath -PathType Leaf) -or [IO.Path]::GetF
 
 Stop-BeamerSecure
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-Copy-Item -LiteralPath $ClientPath -Destination $ServiceExe -Force
+Copy-WhenFree $ClientPath $ServiceExe
 
 New-Item -Path $KeyPath -Force | Out-Null
 Set-ItemProperty -Path $KeyPath -Name 'AllowedClient' -Value $ClientPath -Type String
