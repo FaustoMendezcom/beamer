@@ -222,12 +222,18 @@ class UserStart:
         user = self._user_of(session) if session not in (None, NO_SESSION, 0) else None
         wanted = self._wanted_user()
         if not user or not wanted or user != wanted:
-            self._done_for = None
+            if user and (session, user) != self._done_for:
+                LOGGER.info("Session %s is %s's, not the standard account the installer named (%s); "
+                            "its Beamer is not started", session, user, wanted or "none")
+                self._done_for = (session, user)
+            elif not user:
+                self._done_for = None
             return
         if self._done_for == (session, user) or not self._ready(session):
             return
         self._done_for = (session, user)
         if self._running(session):
+            LOGGER.info("The signed-in user's Beamer already runs in session %s", session)
             return
         try:
             self._launch(session)
@@ -237,18 +243,26 @@ class UserStart:
 
 
 def session_user_sid(session: int) -> Optional[str]:
+    """The SID of whoever is signed in to `session`, from the session's own token: looking the name
+    up instead asks a domain account's domain controller, which just after a start is often not
+    reachable yet."""
     import win32security
     import win32ts
 
-    try:
-        name = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSUserName)
-        if not name:
-            return None
-        domain = win32ts.WTSQuerySessionInformation(None, session, win32ts.WTSDomainName)
-        return win32security.ConvertSidToStringSid(win32security.LookupAccountName(domain or None, name)[0])
-    except Exception:
-        LOGGER.exception("Could not tell who is signed in to session %s", session)
+    if not signed_in(session):
         return None
+    try:
+        token = win32ts.WTSQueryUserToken(session)
+    except Exception:
+        # Signed in, but the session is not yet ready to hand out its token: asked again next time.
+        return None
+    try:
+        return win32security.ConvertSidToStringSid(win32security.GetTokenInformation(token, win32security.TokenUser)[0])
+    except Exception:
+        LOGGER.exception("Could not read who is signed in to session %s", session)
+        return None
+    finally:
+        token.Close()
 
 
 def _processes_in(session: int) -> list:
