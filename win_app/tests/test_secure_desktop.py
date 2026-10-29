@@ -84,6 +84,18 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.sas, [1])
         self.assertEqual(self.status(self.helper.handle(secure_input.PING, b"")), (secure_input.OK, "Winlogon"))
 
+    def test_the_normal_desktop_only_where_allowed(self):
+        helper = secure_helper.Helper(lambda records, count: self.sent.append((records, count)) or count,
+                                      lambda: True, lambda: "Default", SIZE)
+        payload = secure_input.inputs_payload(b"r" * SIZE, SIZE)
+        reply = self.status(helper.handle(secure_input.INPUTS, payload))
+        self.assertEqual(reply[0], secure_input.FAILED)
+        self.assertIn("administrator windows", reply[1])
+        self.assertEqual(self.sent, [])
+        helper.default_desktop = True
+        self.assertEqual(self.status(helper.handle(secure_input.INPUTS, payload)), (secure_input.OK, ""))
+        self.assertEqual(self.sent, [(b"r" * SIZE, 1)])
+
     def test_malformed_input_is_answered_not_sent(self):
         reply = self.helper.handle(secure_input.INPUTS, secure_input.inputs_payload(b"r" * 5, SIZE))
         self.assertEqual(reply[0], secure_input.FAILED)

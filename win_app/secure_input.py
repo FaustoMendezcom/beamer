@@ -30,6 +30,9 @@ ALLOWED_CLIENT_VALUE = "AllowedClient"
 SERVICE_EXE_VALUE = "ServiceExe"
 # The SID of a standard account whose unelevated Beamer may use the helper (client_allowed).
 STANDARD_USER_VALUE = "StandardUser"
+# 1 when the installer was asked (-ElevatedWindows) to let a standard account's Beamer type into
+# administrator windows on the normal desktop too, as ShareMouse does (docs/secure-desktop.md).
+ELEVATED_WINDOWS_VALUE = "ElevatedWindows"
 ADMINISTRATORS_SID = "S-1-5-32-544"
 SYSTEM_SID = "S-1-5-18"
 # CreateFile: the server may identify this client but never act as it (no impersonation).

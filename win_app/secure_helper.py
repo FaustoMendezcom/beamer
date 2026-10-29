@@ -39,11 +39,17 @@ class Helper:
     def __init__(self, send_input: Callable[[bytes, int], int], sas: Callable[[], bool],
                  desktop: Callable[[], str], record_size: int):
         self._send_input, self._sas, self._desktop, self._size = send_input, sas, desktop, record_size
+        # Whether this client's input may go to the normal desktop (administrator windows there):
+        # an elevated Beamer's always may, a standard account's only where the installer allowed it.
+        self.default_desktop = False
 
     def handle(self, kind: int, payload: bytes) -> bytes:
         try:
             if kind == secure_input.INPUTS:
                 records = secure_input.read_inputs(payload, self._size)
+                if not self.default_desktop and self._desktop().lower() == "default":
+                    # FAILED, not REFUSED: this client may still use the secure desktop.
+                    return secure_input.answer(secure_input.FAILED, "administrator windows are not allowed")
                 count = len(records) // self._size
                 sent = self._send_input(records, count)
                 return secure_input.answer(secure_input.OK if sent == count else secure_input.FAILED,
@@ -163,6 +169,10 @@ def standard_user() -> Optional[str]:
     return _installed_value(secure_input.STANDARD_USER_VALUE)
 
 
+def elevated_windows() -> bool:
+    return _installed_value(secure_input.ELEVATED_WINDOWS_VALUE) == "1"
+
+
 class PipeTaken(OSError):
     """Another program already holds this pipe name: it may be posing as the helper."""
 
@@ -211,6 +221,7 @@ def serve_forever(session: Optional[int] = None) -> None:
                 LOGGER.warning("Refused %s (pid %s): %s", info.get("path"), info.get("pid"), why)
                 win32file.WriteFile(pipe, secure_input.answer(secure_input.REFUSED, why))
             else:
+                helper.default_desktop = info.get("elevated") is True or elevated_windows()
                 while True:
                     kind, payload = _read_message(pipe)
                     win32file.WriteFile(pipe, helper.handle(kind, payload))

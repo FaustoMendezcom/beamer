@@ -8,6 +8,9 @@ param(
     [string]$ClientPath,
     # Leave out the sign-in screen receiver: Beamer then works only once someone has signed in.
     [switch]$NoSignInScreen,
+    # Let a standard account's Beamer type into administrator windows too, as ShareMouse does. Any
+    # program of that account could then type into an administrator window that is already open.
+    [switch]$ElevatedWindows,
     [switch]$Remove
 )
 
@@ -116,6 +119,12 @@ if ($otherUser) {
     Write-Host "$($signedIn.Name)'s own Beamer may use it without running as administrator."
 } else {
     Remove-ItemProperty -Path $KeyPath -Name 'StandardUser' -ErrorAction SilentlyContinue
+}
+if ($ElevatedWindows) {
+    Set-ItemProperty -Path $KeyPath -Name 'ElevatedWindows' -Value '1' -Type String
+    Write-Host 'Beamer may type into administrator windows too. Any program of the signed-in account could then type into an open administrator window.' -ForegroundColor Yellow
+} else {
+    Remove-ItemProperty -Path $KeyPath -Name 'ElevatedWindows' -ErrorAction SilentlyContinue
 }
 
 # Services may send Ctrl+Alt+Del (1), alongside Ease of Access apps where that was allowed (2 -> 3).

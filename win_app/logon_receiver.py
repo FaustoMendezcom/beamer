@@ -123,6 +123,28 @@ def _leave_once_someone_signs_in() -> None:
             LOGGER.exception("Could not tell whether anyone signed in")
 
 
+def _follow_the_input_desktop(input_injector) -> None:
+    """Every injection first moves its thread onto the desktop that has the input, as the helper
+    does: the process starts on Winlogon's, and early in a start another can be showing. Logs
+    each desktop it moves to, so a pointer that does not move says where its input went."""
+    import secure_helper
+
+    local = threading.local()
+    send = input_injector._send_input
+
+    def follow_then_send(*args, **kwargs):
+        desktop = getattr(local, "desktop", None)
+        if desktop is None:
+            desktop = local.desktop = secure_helper._Desktop()
+        name = desktop.follow()
+        if name != getattr(local, "name", None):
+            local.name = name
+            LOGGER.info("Input goes to the %s desktop", name or "unknown")
+        return send(*args, **kwargs)
+
+    input_injector._send_input = follow_then_send
+
+
 def _version() -> str:
     from pathlib import Path
 
@@ -151,6 +173,7 @@ def main() -> int:
     import desktop_win
     import input_injector
 
+    _follow_the_input_desktop(input_injector)
     book = MemoryBook(settings).book
     server = LinkResponder(
         book,

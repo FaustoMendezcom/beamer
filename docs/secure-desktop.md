@@ -86,6 +86,20 @@ Install-Maintenance.ps1 gains a `-SecureDesktop` step:
 `-Remove` stops and deletes the service, the protected copy, the HKLM key, and the policy value if
 Beamer set it.
 
+## Administrator windows for a standard account (opt-in, `-ElevatedWindows`)
+
+Windows refuses an unelevated Beamer's input while an administrator window (an elevated PowerShell,
+Task Manager) is in front. Installed with `-ElevatedWindows`, the helper also takes the standard
+account's Beamer's input on the normal desktop: Beamer passes it what Windows refused there with
+such a window in front, as it does for the secure desktop. Without the switch the helper answers
+that administrator windows are not allowed, and nothing changes.
+
+- **What it costs.** The administrator password guards opening an administrator window, not the
+  window once open: with this on, any program of that account could type into an administrator
+  window while one is open. ShareMouse's service makes the same trade. UAC prompts themselves still
+  ask for the password.
+- An elevated Beamer's input always may go there, as it could reach those windows anyway.
+
 ## Before anyone signs in (the sign-in screen)
 
 Beamer is a per-user app, started when someone signs in, so after a restart or a sign-out nothing

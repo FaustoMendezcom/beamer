@@ -145,6 +145,10 @@ def _send_input(*inputs: INPUT) -> None:
     if sent != count:
         error = ctypes.get_last_error() or None
         blocker = foreground_blocker()
+        # An administrator window in front refuses an unelevated Beamer's input: the helper types
+        # there where the installer allowed it (-ElevatedWindows), else it says no and this reports.
+        if blocker.elevated is True and not is_elevated() and _to_secure_desktop(array, count, default_desktop=True):
+            return
         report_input_problem(blocker, operation="SendInput", error=error)
         if blocker.window_class == GAMEINPUT_WINDOW_CLASS:
             release_gameinput_foreground()
@@ -163,14 +167,16 @@ def _secure():
     return _secure_client
 
 
-def _to_secure_desktop(array, count: int) -> bool:
+def _to_secure_desktop(array, count: int, default_desktop: bool = False) -> bool:
     """Input Windows refused because the secure desktop has it (UAC, the lock screen, Ctrl+Alt+Del)
     goes through the SYSTEM helper, when one is installed and lets this Beamer use it
-    (docs/secure-desktop.md). False leaves the refusal to be reported as before."""
+    (docs/secure-desktop.md); with `default_desktop`, input an administrator window on the normal
+    desktop refused, which the helper takes only where the installer allowed it. False leaves the
+    refusal to be reported as before."""
     try:
         import desktop_win
 
-        if desktop_win._on_default_desktop():
+        if desktop_win._on_default_desktop() and not default_desktop:
             return False
         import secure_input
 
