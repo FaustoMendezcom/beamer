@@ -17,6 +17,7 @@ from firewall_win import is_elevated
 
 
 LOGGER = logging.getLogger(__name__)
+cursor_moved = threading.Event()
 on_problem = None
 _problem_at = float("-inf")
 _problem_logged = None
@@ -569,6 +570,8 @@ def _mouse_input(dx: int, dy: int, data: int, flags: int) -> INPUT:
 
 def inject_mouse_move(dx: int, dy: int) -> None:
     _send_input(_mouse_input(dx, dy, 0, MOUSEEVENTF_MOVE))
+    if dx or dy:
+        cursor_moved.set()
     watch_foreground()
 
 

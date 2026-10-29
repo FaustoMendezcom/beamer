@@ -606,6 +606,7 @@ class WindowsApplication(QWidget):
         self._veil = None
         self._veil_hwnd = 0
         self._driven = False
+        self._cursor_overlay = None
         self._idle_pointer = self._make_idle_pointer()
         self.bridge.peers_changed.connect(self._on_peers_changed)
         self.bridge.arrangement.connect(self._on_arrangement)
@@ -5820,6 +5821,16 @@ class WindowsApplication(QWidget):
                 self._idle_pointer.cancel()
             elif was_driven and not self._closing and self._hiding_pointer():
                 self._idle_pointer.driver_left()
+        if sys.platform == "win32":
+            overlay = getattr(self, "_cursor_overlay", None)
+            if overlay is None and self._driven and not self._input_controller_blocked:
+                from cursor_overlay import CursorOverlay
+                overlay = self._cursor_overlay = CursorOverlay(
+                    platform_parts.injector.cursor_moved,
+                    lambda: getattr(self.server, "pointer_owner", self.server.owner) is not None,
+                )
+            if overlay is not None:
+                overlay.set_active(self._driven)
         self._refresh_tray_state()
 
     def _on_peers_changed(self) -> None:
@@ -6008,6 +6019,9 @@ class WindowsApplication(QWidget):
         stop_injector = getattr(platform_parts.injector, "stop", None)
         if stop_injector is not None:
             stop_injector()
+        overlay = getattr(self, "_cursor_overlay", None)
+        if overlay is not None:
+            overlay.close()
         self._hide_crossing()
         if self._idle_pointer is not None:
             self._idle_pointer.cancel()

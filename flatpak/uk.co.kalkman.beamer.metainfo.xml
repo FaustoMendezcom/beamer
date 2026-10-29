@@ -43,6 +43,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.5.18" date="2026-10-29">
+      <description><p>When another machine controls a Windows PC that has no mouse plugged in, Windows draws no pointer there, so Beamer now draws its own while you control that PC. The PC being controlled needs 1.5.18 for this.</p></description>
+    </release>
     <release version="1.5.17" date="2026-10-28">
       <description><p>Keypad keys now reach the other machine as keypad keys, not as the number row, so apps with keypad shortcuts such as Blender can tell them apart. Both machines need 1.5.17 for this. When a Mac's keyboard controls another machine, an accent from a dead key, such as ´ then e for é, no longer drops when you pause between the two keys. On a Mac, Beamer no longer uses more and more memory while you move the mouse or type.</p></description>
     </release>
