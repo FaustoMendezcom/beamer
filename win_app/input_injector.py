@@ -139,6 +139,8 @@ def _send_input(*inputs: INPUT) -> None:
     array = (INPUT * count)(*inputs)
     ctypes.set_last_error(0)
     sent = user32.SendInput(count, array, ctypes.sizeof(INPUT))
+    if sent != count and _to_secure_desktop(array, count):
+        return
     if sent != count:
         error = ctypes.get_last_error() or None
         blocker = foreground_blocker()
@@ -146,6 +148,33 @@ def _send_input(*inputs: INPUT) -> None:
         if blocker.window_class == GAMEINPUT_WINDOW_CLASS:
             release_gameinput_foreground()
         raise OSError(error or 0, "Windows refused Beamer's input")
+
+
+_secure_client = None
+
+
+def _secure():
+    global _secure_client
+    if _secure_client is None:
+        import secure_input
+
+        _secure_client = secure_input.Client()
+    return _secure_client
+
+
+def _to_secure_desktop(array, count: int) -> bool:
+    """Input Windows refused because the secure desktop has it (UAC, the lock screen, Ctrl+Alt+Del)
+    goes through the SYSTEM helper, when one is installed and lets this Beamer use it
+    (docs/secure-desktop.md). False leaves the refusal to be reported as before."""
+    try:
+        import desktop_win
+
+        if desktop_win._on_default_desktop():
+            return False
+        return _secure().send_inputs(ctypes.string_at(array, count * ctypes.sizeof(INPUT)), ctypes.sizeof(INPUT))
+    except Exception:
+        LOGGER.exception("Could not pass input to the secure desktop helper")
+        return False
 
 
 def _vk_key_scan(ch: str) -> int:
@@ -463,6 +492,9 @@ def inject_key(name: str, down: bool, us: Optional[str] = None) -> None:
             plan += [(vk, 0, KEYEVENTF_KEYUP) for vk in reversed(sequence)]
             _send_input(*(_keybd_input(vk, scan, flags) for vk, scan, flags in plan))
         return
+    if (lowered == "delete" and down and _mods_down & {"ctrl", "ctrl_r"} and _mods_down & {"alt", "alt_r"}
+            and _send_secure_attention()):
+        return
     if lowered in ("brightness_up", "brightness_down"):
         from brightness_worker import submit
 
@@ -482,6 +514,16 @@ def inject_key(name: str, down: bool, us: Optional[str] = None) -> None:
     if not plan:
         return
     _send_input(*(_keybd_input(vk, scan, flags) for vk, scan, flags in plan))
+
+
+def _send_secure_attention() -> bool:
+    """Ctrl+Alt+Del from a driving machine: typed, Windows ignores it, so the helper sends it
+    (SendSAS). False without a helper, and the keys are typed as before."""
+    try:
+        return _secure().sas()
+    except Exception:
+        LOGGER.exception("Could not send Ctrl+Alt+Del")
+        return False
 
 
 def plan_text_inputs(text: str) -> List[Tuple[int, int, int]]:

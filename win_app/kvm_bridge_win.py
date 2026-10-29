@@ -6324,6 +6324,18 @@ def unlock_portable(parent=None) -> bool:
 
 
 def main() -> None:
+    # The secure desktop service and its helper (docs/secure-desktop.md): the same exe, run by the
+    # service control manager or by that service, never with the app's window or links.
+    if sys.platform == "win32" and len(sys.argv) > 1 and sys.argv[1] in ("--service", "--secure-helper"):
+        import secure_service
+
+        if sys.argv[1] == "--service":
+            secure_service.run_service()
+            return
+        import secure_helper
+
+        secure_service.configure_logging("secure-helper.log")
+        sys.exit(secure_helper.main())
     portable_runtime.initialise()
     arguments = parse_args()
     if portable_runtime.enabled() and arguments.config.resolve() != portable_runtime.settings_path().resolve():

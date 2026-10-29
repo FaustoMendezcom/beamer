@@ -59,6 +59,8 @@ NOT_SHOWN = {
     "find", "findall", "findtext", "SubElement", "task_xml",
     "_FlagAsMethod",  # COM method identifiers must retain their registered spelling.
     "RegisterClipboardFormat",  # Clipboard format names are Windows identifiers ("Preferred DropEffect").
+    # The secure desktop helper's answers are pipe diagnostics Beamer logs; a process's command line.
+    "answer", "CreateProcessAsUser",
 }
 
 

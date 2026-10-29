@@ -18,7 +18,10 @@ analysis = Analysis(
           + [(str(path), "locales") for path in (source_dir.parent / "locales").glob("*.po")],
     # core/effects.py imports its fx_* modules by name, which PyInstaller's analysis cannot see; they are
     # among core_modules. segno is imported inside a try in qr_code.py, so it is named here as well.
-    hiddenimports=["nacl", "_cffi_backend", "segno", "win32com.client", "pythoncom", "pywintypes"] + app_modules + core_modules,
+    hiddenimports=["nacl", "_cffi_backend", "segno", "win32com.client", "pythoncom", "pywintypes",
+                   # The secure desktop service and helper (docs/secure-desktop.md).
+                   "servicemanager", "win32timezone", "win32service", "win32serviceutil", "win32event",
+                   "win32pipe", "win32file", "win32security", "win32process", "win32api"] + app_modules + core_modules,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
