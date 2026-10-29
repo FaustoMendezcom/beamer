@@ -106,6 +106,38 @@ def display_map() -> dict:
     return kept or {str(index): rect for index, rect in enumerate(found)}
 
 
+def wake_displays() -> None:
+    """Turns this PC's screens on if Windows had turned them off for inactivity: a pointer nudge
+    there and back (input is what Windows wakes a display for) and a request that the display
+    stay on, which also resets the idle timer. Nothing moves that anyone would see."""
+    if user32 is None:
+        return
+    import input_injector
+
+    try:
+        input_injector.inject_mouse_move(1, 0)
+        input_injector.inject_mouse_move(-1, 0)
+    except OSError:
+        pass
+    ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED = 0x00000002, 0x00000001
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)
+
+
+class _LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_ulong)]
+
+
+def idle_seconds() -> float:
+    """How long since this PC's last input, from anyone: a driving machine's injected input too."""
+    if user32 is None:
+        return 0.0
+    info = _LASTINPUTINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetLastInputInfo(ctypes.byref(info)):
+        return 0.0
+    return max(0.0, ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0)
+
+
 def display_map_all() -> dict:
     """`display_map` with the away monitors too: what a machine that does not move its own tile
     for shared monitors puts in the picture."""

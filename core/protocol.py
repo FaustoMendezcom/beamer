@@ -455,7 +455,7 @@ def read_files_fetch(message):
     return offer, requester
 
 
-MONITORS_ACTIONS = ("announce", "give", "request")
+MONITORS_ACTIONS = ("announce", "give", "request", "wake", "awake")
 MAX_MONITORS = 16
 _MONITOR_ID = re.compile(r"[A-Za-z0-9_.:-]{1,64}")
 
@@ -464,7 +464,10 @@ def monitors_msg(action: str, monitors=(), host: bool = False, host_since: int =
     """Shared monitors, wired to two machines' inputs (WIRE.md section 8): `announce` lists this
     machine's monitors by EDID identity, each with the input code that shows this machine and the
     display key it has here; `give` says this machine has switched the monitors it shares with
-    the peer to the peer's input; `request` asks the peer, which they show, to switch them here.
+    the peer to the peer's input; `request` asks the peer, which they show, to switch them here;
+    `wake` asks the peer to turn its screens on before monitors are switched to it, as a monitor
+    given a screen that is off finds no signal and goes back; the peer answers `awake` once they
+    are on, and only then are the monitors, and the input, switched.
     An `announce` with `host` says the shared monitors belong to the sender's place in the shared
     picture, so it alone moves tiles for them. Optional on wire 6, sent only to peers listing
     `monitors`."""

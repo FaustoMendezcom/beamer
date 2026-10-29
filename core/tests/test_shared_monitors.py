@@ -30,6 +30,8 @@ class MonitorsMessageTests(unittest.TestCase):
                          (True, 5))
         self.assertEqual(protocol.read_monitors(protocol.monitors_msg("give")), ("give", [], False, 0))
         self.assertEqual(protocol.read_monitors(protocol.monitors_msg("request")), ("request", [], False, 0))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("wake")), ("wake", [], False, 0))
+        self.assertEqual(protocol.read_monitors(protocol.monitors_msg("awake")), ("awake", [], False, 0))
         older = {"type": "monitors", "data": {"action": "announce", "monitors": listed}}
         self.assertEqual(protocol.read_monitors(older)[2], False)
         self.assertIsNone(protocol.read_monitors({"type": "monitors", "data": {"action": "announce",

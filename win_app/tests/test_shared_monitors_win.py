@@ -256,5 +256,53 @@ class EdidTests(unittest.TestCase):
         self.assertIsNone(edid_identity(None))
 
 
+class WakeBeforeSwitchTests(unittest.TestCase):
+    """Monitors switched to a PC whose screens are off find no signal and come back, leaving the
+    input there unseen: the screens are woken first, and the monitors and input go once on."""
+
+    def app(self, idle):
+        import types
+        import kvm_bridge_win
+        from unittest import mock
+
+        sent, woken, given, passed = [], [], [], []
+        app = types.SimpleNamespace(
+            _send_to=lambda peer, message: sent.append(message["data"]["action"]),
+            _label_of=lambda peer: "PC2", _waiting_awake=None, _closing=False,
+            _on_alert=lambda *args: None, _pass_input_to=passed.append,
+            shared_monitors=types.SimpleNamespace(give=lambda peer: given.append(peer) or ["0", "1"]))
+        for name in ("_give_to", "_wake_for", "_give_again_if_bounced"):
+            setattr(app, name, types.MethodType(getattr(kvm_bridge_win.WindowsApplication, name), app))
+        desktop = types.SimpleNamespace(idle_seconds=lambda: idle, wake_displays=lambda: woken.append(1))
+        patches = [mock.patch.object(kvm_bridge_win, "desktop_win", desktop),
+                   mock.patch.object(kvm_bridge_win.QTimer, "singleShot", lambda ms, call: call() if ms != kvm_bridge_win.BOUNCE_CHECK_MS else None)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return app, sent, woken, given, passed
+
+    def test_a_pc_in_use_answers_awake_at_once_without_waking(self):
+        app, sent, woken, _given, _passed = self.app(idle=3)
+        app._wake_for("RFhY")
+        self.assertEqual((sent, woken), (["awake"], []))
+
+    def test_an_idle_pc_wakes_its_screens_then_answers(self):
+        app, sent, woken, _given, _passed = self.app(idle=600)
+        app._wake_for("RFhY")
+        self.assertEqual((sent, woken), (["awake"], [1]))
+
+    def test_the_monitors_and_input_go_once_whether_awake_or_the_wait_comes_first(self):
+        app, sent, _woken, given, passed = self.app(idle=0)
+        app._waiting_awake = "RFhY"
+        app._give_to("RFhY")
+        app._give_to("RFhY")
+        self.assertEqual((given, passed), (["RFhY"], ["RFhY"]))
+        self.assertEqual(sent, ["give"])
+
+    def test_nothing_goes_for_a_switch_not_waiting(self):
+        app, sent, _woken, given, _passed = self.app(idle=0)
+        app._give_to("RFhY")
+        self.assertEqual((given, sent), ([], []))
+
 if __name__ == "__main__":
     unittest.main()

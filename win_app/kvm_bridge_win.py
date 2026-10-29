@@ -175,6 +175,15 @@ IGNORED_NOTES = {
                 "it here: a mouse's back button for this PC's browser, say, or a volume key for its speakers."),
 }
 FULL_SCREEN_CHECK_MS = 1000
+# After switching the shared monitors to a peer: long enough for a monitor that found no signal
+# (the peer's screens were off) to have gone back, and for the peer's screens to have woken.
+BOUNCE_CHECK_MS = 5000
+# Switching to a peer waits this long at most for its `awake`, then switches anyway (an older build).
+AWAKE_WAIT_MS = 3500
+# A peer with input this recently has its screens on; else it wakes them and answers after SCREENS_ON_MS,
+# the time a monitor's signal takes to come back.
+AWAKE_IDLE_SECONDS = 55
+SCREENS_ON_MS = 2000
 # How long a dragged slider waits, still, before the value it settled on is written to disk.
 SETTLE_MS = 300
 
@@ -608,6 +617,7 @@ class WindowsApplication(QWidget):
         self.shared_monitors = None
         self._monitors_away = {}
         self._monitors_announced = None
+        self._waiting_awake = None
         self._monitors_chord_hook = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
         self._monitors_chord_driven = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
         self.identify_screens = IdentifyScreens(self)
@@ -2184,9 +2194,15 @@ class WindowsApplication(QWidget):
         elif action == "give":
             self.shared_monitors.taken(peer)
         elif action == "request":
-            # The asking PC moves its own input; this one's stays where it is.
+            # The asking PC moves its own input; this one's stays where it is. It is in use, so its
+            # screens are on.
             if self.shared_monitors.give(peer):
                 self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
+                QTimer.singleShot(BOUNCE_CHECK_MS, lambda: self._give_again_if_bounced(peer))
+        elif action == "wake":
+            self._wake_for(peer)
+        elif action == "awake":
+            self._give_to(peer)
 
     def switch_computer(self) -> None:
         """The Switch computer button, tray action and shortcut: the monitors shared with a peer
@@ -2207,16 +2223,60 @@ class WindowsApplication(QWidget):
             return
         if self.shared_monitors.showing_here(peer):
             self._claim_monitors_host()
-            if not self.shared_monitors.give(peer):
-                self._on_alert(tr("Beamer"), tr("The monitors did not switch to {name}.").format(name=self._label_of(protocol.read_id(peer))))
-                return
-            self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
-            # The input follows once the peer has had the `give`, so it lands on monitors it shows.
-            QTimer.singleShot(300, lambda: self._pass_input_to(peer))
+            # The peer's screens may be off for inactivity: monitors switched to them would find no
+            # signal and come back, leaving the input there unseen. It is asked to wake them, and the
+            # monitors and the input go only once it says they are on (or, from a PC that does not
+            # answer, after AWAKE_WAIT_MS).
+            self._waiting_awake = peer
+            self._send_to(protocol.read_id(peer), protocol.monitors_msg("wake"))
+            QTimer.singleShot(AWAKE_WAIT_MS, lambda: self._give_to(peer))
         else:
             self._send_to(protocol.read_id(peer), protocol.monitors_msg("request"))
             if self.sender.owner == protocol.read_id(peer):
                 self.sender.set_redirecting(False)
+
+    def _give_to(self, peer: str) -> None:
+        """The monitors, then the input, to `peer`, once its screens are on: once per Switch."""
+        if getattr(self, "_waiting_awake", None) != peer or self.shared_monitors is None:
+            return
+        self._waiting_awake = None
+        if not self.shared_monitors.give(peer):
+            self._on_alert(tr("Beamer"), tr("The monitors did not switch to {name}.").format(
+                name=self._label_of(protocol.read_id(peer))))
+            return
+        self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
+        QTimer.singleShot(BOUNCE_CHECK_MS, lambda: self._give_again_if_bounced(peer))
+        # The input follows once the peer has had the `give`, so it lands on monitors it shows.
+        QTimer.singleShot(300, lambda: self._pass_input_to(peer))
+
+    def _wake_for(self, peer: str) -> None:
+        """A peer is about to switch the shared monitors here: screens on, then `awake`. Input in the
+        last AWAKE_IDLE_SECONDS means they are on already, as Windows turns none off that soon."""
+        idle = getattr(desktop_win, "idle_seconds", lambda: 0.0)()
+        answer = lambda: self._send_to(protocol.read_id(peer), protocol.monitors_msg("awake"))
+        if idle < AWAKE_IDLE_SECONDS:
+            answer()
+            return
+        wake = getattr(desktop_win, "wake_displays", None)
+        LOGGER.info("%s is switching the shared monitors here after %.0f s idle: waking this PC's screens",
+                    self._label_of(protocol.read_id(peer)), idle)
+        if wake is not None:
+            wake()
+        QTimer.singleShot(SCREENS_ON_MS, answer)
+
+    def _give_again_if_bounced(self, peer: str) -> None:
+        """Monitors switched to a peer whose screens were still waking find no signal and come back
+        here; by now the peer's screens are on, so they are switched once more."""
+        monitors = self.shared_monitors
+        if monitors is None or self._closing:
+            return
+        monitors.poll()
+        if not monitors.showing_here(peer):
+            return
+        LOGGER.info("The shared monitors came back from %s (its screens were off); switching them again",
+                    self._label_of(protocol.read_id(peer)))
+        if monitors.give(peer):
+            self._send_to(protocol.read_id(peer), protocol.monitors_msg("give"))
 
     def _claim_monitors_host(self) -> None:
         """The first PC to switch the shared monitors away, with a display of its own to keep,
