@@ -2229,7 +2229,7 @@ class WindowsApplication(QWidget):
         if peer is None:
             # A PC that shared these monitors before and is not linked now is most likely asleep: wake it.
             asleep = next((ident for ident in sorted(shared) if protocol.read_id(ident) is not None), None)
-            if asleep is not None and self.sender.wake(protocol.read_id(asleep)):
+            if asleep is not None and self.sender.wake(protocol.read_id(asleep), window=WAKE_SWITCH_SECONDS, follows=True):
                 LOGGER.info("Switch computer: %s is not connected; waking it", self._label_of(protocol.read_id(asleep)))
                 # A PC starting from off takes minutes, longer than the wake's own wait: the switch
                 # goes on once it links, the sign-in screen's receiver included.

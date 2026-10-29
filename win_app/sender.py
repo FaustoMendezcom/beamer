@@ -1619,9 +1619,10 @@ class LinkSender:
 
     # -- waking -------------------------------------------------------------
 
-    def wake(self, peer: Optional[bytes] = None) -> bool:
-        """Sends a peer a wake-on-LAN packet and waits up to a minute for its link. Nothing is
-        queued: the person switches again once it is up. False when there is no address to wake,
+    def wake(self, peer: Optional[bytes] = None, window: Optional[float] = None, follows: bool = False) -> bool:
+        """Sends a peer a wake-on-LAN packet and waits up to a minute (or `window` seconds) for its
+        link. Nothing is queued here: the person switches again once it is up, unless the caller
+        `follows` with a switch of its own, which the notices then leave unsaid. False when there is no address to wake,
         the peer answered and refused (it is awake; waking it would hide why), or a wake is
         already in flight."""
         peer = peer or self.shortcut_target()
@@ -1633,10 +1634,12 @@ class LinkSender:
             if peer in self._waking:
                 return True
             self._waking.add(peer)
-        threading.Thread(target=self._wake_worker, args=(peer, address, entry), name="Beamer-wake", daemon=True).start()
+        threading.Thread(target=self._wake_worker, args=(peer, address, entry, window or wol.WAKE_WINDOW_SECONDS, follows),
+                         name="Beamer-wake", daemon=True).start()
         return True
 
-    def _wake_worker(self, peer, address, entry) -> None:
+    def _wake_worker(self, peer, address, entry, window=None, follows=False) -> None:
+        window = window or wol.WAKE_WINDOW_SECONDS
         name = self._name(peer)
         started = self._clock()
         try:
@@ -1651,12 +1654,13 @@ class LinkSender:
             while not self._stop_event.wait(WAKE_POLL_SECONDS):
                 if self.links.up(peer):
                     LOGGER.info("%s woke and connected", name)
-                    self._alert(tr("{name} is awake — switch again to send input").format(name=name))
+                    if not follows:
+                        self._alert(tr("{name} is awake — switch again to send input").format(name=name))
                     return
-                if self._clock() - started >= wol.WAKE_WINDOW_SECONDS:
+                if self._clock() - started >= window:
                     break
             if not self._stop_event.is_set():
-                LOGGER.warning("%s did not answer within %.0fs of the wake-on-LAN packet", name, wol.WAKE_WINDOW_SECONDS)
+                LOGGER.warning("%s did not answer within %.0fs of the wake-on-LAN packet", name, window)
                 self._alert(tr(NOT_WOKEN_STATUS).format(name=name))
         finally:
             with self._wake_lock:
