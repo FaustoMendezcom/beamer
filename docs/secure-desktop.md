@@ -118,8 +118,9 @@ the driving machine as at the PC's own keyboard, and no credentials are stored a
   pairing.
 - **Found where its address changed.** Like the app with no pairing code up, it broadcasts its
   name and link port every 2 s on the pairing port (no id), which paired machines dial by name.
-- **Keys and the pointer, nothing else.** Its `welcome` lists no optional capabilities: no
-  clipboard, files, settings, layout or monitors messages reach it.
+- **Keys and the pointer, nothing else.** Its `welcome` lists `layout` alone, so paired machines
+  cross to it by the shared picture as they do to its app; pictures travel only with `settings`, so
+  no clipboard, files, settings, picture or monitors messages reach it.
 - **Firewall**: `Beamer Sign-in Screen (TCP-In)`, inbound TCP on that port, Private profile, for
   BeamerSecure.exe only.
 - **What it adds to the attack surface**: the link's handshake and input parsing, now also as

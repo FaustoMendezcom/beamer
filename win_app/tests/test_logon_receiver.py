@@ -25,11 +25,11 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(logon_receiver.settings_path(r"C:\Program Files\Beamer\BeamerSecure.exe"),
                          r"C:\Program Files\Beamer\logon\settings.json")
 
-    def test_the_same_pc_its_own_beamer_says_with_no_optional_messages(self):
+    def test_the_same_pc_its_own_beamer_says_with_the_picture_only(self):
         own = logon_receiver.identity(SETTINGS, "1.5.18")
         self.assertEqual(own["id"], protocol.read_id(MACHINE))
         self.assertEqual((own["name"], own["platform"], own["app"], own["caps"], own["port"]),
-                         ("COR", "windows", "1.5.18", [], 24820))
+                         ("COR", "windows", "1.5.18", ["layout"], 24820))
 
     def test_its_beacon_is_the_apps_with_no_code_up(self):
         from core import pairing

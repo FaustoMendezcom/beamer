@@ -20,9 +20,11 @@ from typing import Optional
 LOGGER = logging.getLogger(__name__)
 FOLDER_NAME = "logon"
 SETTINGS_NAME = "settings.json"
-# The identity's caps: none of the optional messages. Input, the pointer's way back and the
-# link's own control messages need none.
-CAPS: list = []
+# The identity's caps: `layout` alone, so the paired machines take this PC's place from the shared
+# picture as they do when its Beamer runs (a peer without it crosses by a saved side, often none).
+# It brings no message here: pictures travel only with `settings`, and what arrives anyway goes to
+# callbacks this receiver does not have. Input, the pointer's way back and control need nothing.
+CAPS: list = ["layout"]
 DPI_AWARENESS_PER_MONITOR_V2 = -4
 SIGNED_IN_CHECK_SECONDS = 1.0
 
