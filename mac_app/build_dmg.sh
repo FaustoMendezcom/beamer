@@ -137,8 +137,7 @@ done < "$STAGING_DIR/machos.txt"
 echo "$(wc -l < "$STAGING_DIR/machos.txt" | tr -d ' ') Mach-O files in the app, every one arm64 and x86_64"
 
 # Anything still naming this Mac's home folder, in a file or inside the zipped stdlib, stops the build.
-# With its trailing slash: a short home (/Users/unk) is otherwise found inside unrelated text.
-.venv/bin/python3 - "$APP" "${HOME%/}/" <<'EOF'
+.venv/bin/python3 - "$APP" "$HOME" <<'EOF'
 import pathlib, sys, zipfile
 app, home = pathlib.Path(sys.argv[1]), sys.argv[2].encode()
 found = []
