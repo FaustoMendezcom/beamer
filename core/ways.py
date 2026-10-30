@@ -596,32 +596,28 @@ def picture_capable(settings, capable=()):
     return set(capable)
 
 
-def _inner_corner(screen, corner, own_frames) -> bool:
-    """Whether `screen`'s corner `corner` ("top_left", ...) is also on another of this machine's
-    own displays, within CONTACT_SLACK: an inner junction of its arrangement (a 2x2 grid's centre)."""
+def _corner_enclosed(screen, corner, screens) -> bool:
+    """Whether both sides of `screen`'s corner `corner` ("top_left", ...) are taken by a display,
+    this machine's own or a peer's: the point where displays meet on every side (a 2x2 grid's
+    centre, or a display flanked by two others). A push near it goes to the display across the side
+    it presses, so a corner route there only throws the pointer diagonally to somewhere else.
+    A corner with an open side, which nothing but the corner reaches, keeps its route."""
     vertical, horizontal = (str(corner).split("_") + [""])[:2]
     x = screen["x"] + (screen["w"] if horizontal == "right" else 0)
     y = screen["y"] + (screen["h"] if vertical == "bottom" else 0)
-    return any(frame.get("display") != screen.get("display")
-               and frame["x"] - CONTACT_SLACK <= x <= frame["x"] + frame["w"] + CONTACT_SLACK
-               and frame["y"] - CONTACT_SLACK <= y <= frame["y"] + frame["h"] + CONTACT_SLACK
-               for frame in own_frames)
+    out_x, out_y = (1 if horizontal == "right" else -1), (1 if vertical == "bottom" else -1)
+    step = CONTACT_SLACK + 0.1
+    # Just across each side of the corner, a little way along that side.
+    across_vertical = (x - out_x * step, y + out_y * step)
+    across_horizontal = (x + out_x * step, y - out_y * step)
 
+    def taken(point):
+        px, py = point
+        return any(frame is not screen and frame["x"] < px < frame["x"] + frame["w"]
+                   and frame["y"] < py < frame["y"] + frame["h"]
+                   for frames in screens.values() for frame in frames)
 
-def _edge_covers(screen, corner, found) -> bool:
-    """Whether an edge contact on the same display, on one of `corner`'s two sides, reaches the
-    corner point within CONTACT_SLACK."""
-    vertical, horizontal = (str(corner).split("_") + [""])[:2]
-    x = screen["x"] + (screen["w"] if horizontal == "right" else 0)
-    y = screen["y"] + (screen["h"] if vertical == "bottom" else 0)
-    for other, contact, _target in found:
-        side, start, end = contact
-        if other.get("display") != screen.get("display") or side not in (vertical, horizontal):
-            continue
-        along = y if side in ("left", "right") else x
-        if start - CONTACT_SLACK <= along <= end + CONTACT_SLACK:
-            return True
-    return False
+    return taken(across_vertical) and taken(across_horizontal)
 
 
 def compile_layout(settings, layout, moved=None, capable=(), now=None, platform="pc",
@@ -754,10 +750,9 @@ def compile_layout(settings, layout, moved=None, capable=(), now=None, platform=
                 side, start, end = contact
                 if side == "corner":
                     corner = contact[1]
-                    if _inner_corner(screen, corner, screens.get(own_id, ())) or _edge_covers(screen, corner, found):
-                        # The point where this machine's own displays meet, or one an edge to the same
-                        # peer already crosses: a pointer passing it goes to the next display, or
-                        # through that edge to what lies right across it, never diagonally elsewhere.
+                    if _corner_enclosed(screen, corner, screens):
+                        # Displays on both sides of it: a pointer passing it goes to the one across
+                        # the side it presses, never diagonally elsewhere.
                         continue
                     if (intent["edge"] or intent["corner"]) and corner not in corners:
                         corners.add(corner)
