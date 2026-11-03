@@ -52,6 +52,9 @@ MONITORS_MAX_AGE_SECONDS = 1.0
 TICK_SECONDS = 0.1
 ROUND_TRIP_MAX_AGE_SECONDS = 5.0
 WAKE_POLL_SECONDS = 0.5
+# While a wake waits, the packet goes again this often: one can be lost, and an adapter asleep in a
+# deeper standby may need more than one.
+WAKE_RESEND_SECONDS = 15.0
 # How long a machine that is being driven waits for its driver to let go before it gives up on
 # the move it was asked for: the responder's own forced end is one second.
 LET_GO_WAIT_SECONDS = 1.5
@@ -217,6 +220,7 @@ class LinkSender:
         self._clip_busy = False
         self._statuses: dict = {}
         self._waking = set()
+        self._wake_again = set()
         self._wake_lock = threading.Lock()
         self._outbound: "queue.Queue[tuple]" = queue.Queue(maxsize=SEND_QUEUE_SIZE)
         self._stop_event = threading.Event()
@@ -1632,6 +1636,8 @@ class LinkSender:
             return False
         with self._wake_lock:
             if peer in self._waking:
+                # Asked again while waiting: send again now rather than only at the next resend.
+                self._wake_again.add(peer)
                 return True
             self._waking.add(peer)
         threading.Thread(target=self._wake_worker, args=(peer, address, entry, window or wol.WAKE_WINDOW_SECONDS, follows),
@@ -1651,7 +1657,19 @@ class LinkSender:
                 return
             LOGGER.info("sent wake-on-LAN to %s", name)
             self._alert(tr(WAKING_STATUS).format(name=name))
+            sent_at, sent = started, 1
             while not self._stop_event.wait(WAKE_POLL_SECONDS):
+                with self._wake_lock:
+                    again = peer in self._wake_again
+                    self._wake_again.discard(peer)
+                if again or self._clock() - sent_at >= WAKE_RESEND_SECONDS:
+                    try:
+                        self._wake_sender(address, entry.get("host") or None)
+                        sent += 1
+                        LOGGER.info("sent wake-on-LAN to %s again (%d)", name, sent)
+                    except (OSError, ValueError) as exc:
+                        LOGGER.warning("wake-on-LAN packet not sent again: %s", exc)
+                    sent_at = self._clock()
                 if self.links.up(peer):
                     LOGGER.info("%s woke and connected", name)
                     if not follows:
@@ -1665,6 +1683,7 @@ class LinkSender:
         finally:
             with self._wake_lock:
                 self._waking.discard(peer)
+                self._wake_again.discard(peer)
 
     # -- plumbing -----------------------------------------------------------
 

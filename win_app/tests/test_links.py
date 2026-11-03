@@ -1257,6 +1257,21 @@ class WakeTests(unittest.TestCase):
         self.assertEqual(self.woken, [("aa:bb:cc:dd:ee:ff", "192.168.77.9")])
         self.sender._stop_event.set()
 
+    def test_the_packet_goes_again_while_waiting_and_at_once_when_asked_again(self):
+        import time
+
+        import sender as sender_module
+
+        with mock.patch.object(sender_module, "WAKE_RESEND_SECONDS", 0.3):
+            self.assertTrue(self.sender.wake(B, window=5, follows=True))
+            time.sleep(0.1)
+            self.assertTrue(self.sender.wake(B))
+            time.sleep(1.0)
+            self.sender._stop_event.set()
+        # The first, the one asked for again (at the next poll), and at least one resend after it.
+        self.assertGreaterEqual(len(self.woken), 3)
+        self.assertEqual(set(self.woken), {("aa:bb:cc:dd:ee:ff", "192.168.77.9")})
+
     def test_a_peer_that_answered_and_refused_is_not_woken(self):
         self.rig.links.refusing.add(B)
         self.assertFalse(self.sender.wake(B))
