@@ -258,7 +258,7 @@ class GuestPictureTests(unittest.TestCase):
             shared_monitors=types.SimpleNamespace(
                 announcement=lambda: [], away=lambda: {}, shared_keys=lambda: set(shared[0]),
                 host=False, host_since=0),
-            _closing=False, _monitors_announced=[], _monitors_away={}, _config=object(),
+            _closing=False, _monitors_announced={}, _monitors_away={}, _config=object(),
             _peer_caps=lambda: {}, _reflect_shared_monitors=lambda: None,
             _apply_monitors_away=lambda away: calls.append("away"),
             _refresh_own_displays=lambda: calls.append("refresh"),
@@ -272,6 +272,38 @@ class GuestPictureTests(unittest.TestCase):
         changed(app)
         self.assertEqual(calls, ["refresh", "reconcile"])
 
+
+    def test_a_peer_told_less_on_link_up_hears_again_once_the_monitors_are_back(self):
+        # A PC waking from sleep links before Windows has its monitors back: the announcement sent
+        # as the link comes up is empty. Once they are back, the same list as before the sleep must
+        # go to that peer again, though it matches the last change sent to all.
+        import types
+
+        import kvm_bridge_win
+
+        listed = [[{"id": "GBT3403:1", "code": 8, "display": "0", "showing": True}]]
+        sent = []
+        app = types.SimpleNamespace(
+            shared_monitors=types.SimpleNamespace(
+                announcement=lambda: listed[0], away=lambda: {}, shared_keys=lambda: set(),
+                host=False, host_since=0),
+            _closing=False, _monitors_announced={}, _monitors_away={}, _config=object(),
+            _peer_caps=lambda: {b"peer": ("monitors",)},
+            _send_to=lambda peer, message: sent.append((peer, message)),
+            _reflect_shared_monitors=lambda: None)
+        changed = kvm_bridge_win.WindowsApplication._on_shared_monitors_changed
+        changed(app)
+        self.assertEqual(len(sent), 1)
+        before_sleep = listed[0]
+        # The link comes up again after the sleep, and its first messages carry an empty list.
+        listed[0] = []
+        app._monitors_announced[b"peer"] = []
+        listed[0] = before_sleep
+        changed(app)
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[-1][1]["data"]["monitors"], before_sleep)
+        changed(app)
+        self.assertEqual(len(sent), 2)
 
 class EdidTests(unittest.TestCase):
     def edid(self, serial_text=b"24142B000972", number=0):

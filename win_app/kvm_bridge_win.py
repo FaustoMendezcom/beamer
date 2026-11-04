@@ -619,7 +619,10 @@ class WindowsApplication(QWidget):
         self.bridge.switch_computer.connect(self.switch_computer)
         self.shared_monitors = None
         self._monitors_away = {}
-        self._monitors_announced = None
+        # {peer: the announcement it last got}: per peer, as the one sent when a link comes up can
+        # differ from the last change sent to all (a PC waking from sleep announces before Windows
+        # has its monitors back, and must announce again once they are).
+        self._monitors_announced = {}
         self._waiting_awake = None
         self._monitors_chord_hook = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
         self._monitors_chord_driven = shared_monitors.ChordWatch(self.bridge.switch_computer.emit)
@@ -2132,12 +2135,12 @@ class WindowsApplication(QWidget):
         if self.shared_monitors is None or self._closing:
             return
         announcement = self.shared_monitors.announcement()
-        if announcement != self._monitors_announced:
-            self._monitors_announced = announcement
-            for peer, caps in self._peer_caps().items():
-                if "monitors" in caps:
-                    self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host,
-                                                              host_since=self.shared_monitors.host_since))
+        sent = self._monitors_announced
+        for peer, caps in self._peer_caps().items():
+            if "monitors" in caps and sent.get(peer) != announcement:
+                sent[peer] = announcement
+                self._send_to(peer, protocol.monitors_msg("announce", announcement, host=self.shared_monitors.host,
+                                                          host_since=self.shared_monitors.host_since))
         away = self.shared_monitors.away()
         shared = self.shared_monitors.shared_keys()
         if away != self._monitors_away:
@@ -2213,7 +2216,7 @@ class WindowsApplication(QWidget):
                             self._label_of(protocol.read_id(peer)))
                 self.shared_monitors.host = False
                 self._save_shared_monitors(host=False, host_since=0)
-                self._monitors_announced = None
+                self._monitors_announced = {}
                 self._refresh_own_displays()
                 self._reconcile_displays()
             self._save_shared_monitors(peers=self.shared_monitors.snapshot()["peers"])
@@ -2317,7 +2320,7 @@ class WindowsApplication(QWidget):
         monitors.host_since = int(time.time())
         LOGGER.info("This PC is host for the shared monitors: it keeps their place in the picture")
         self._save_shared_monitors(host=True, host_since=monitors.host_since)
-        self._monitors_announced = None
+        self._monitors_announced = {}
         self._on_shared_monitors_changed()
 
     def _pass_input_to(self, peer: str) -> None:
@@ -2476,7 +2479,9 @@ class WindowsApplication(QWidget):
         messages.extend(self._desk_messages(profiles.desk_message(outcome["settings"]),
                                             self._peer_caps().get(peer, ())))
         if getattr(self, "shared_monitors", None) is not None and "monitors" in self._peer_caps().get(peer, ()):
-            messages.append(protocol.monitors_msg("announce", self.shared_monitors.announcement(),
+            announcement = self.shared_monitors.announcement()
+            self._monitors_announced[peer] = announcement
+            messages.append(protocol.monitors_msg("announce", announcement,
                                                   host=self.shared_monitors.host,
                                                   host_since=self.shared_monitors.host_since))
         return messages
