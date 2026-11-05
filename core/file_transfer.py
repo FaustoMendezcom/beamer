@@ -10,7 +10,7 @@ connection to the sender's port with the link's own handshake, sends `files_fetc
 - for each file in manifest order, data frames `00 <bytes>` and an end frame `01`;
 - a last frame `02` once every file has gone.
 
-Pure but for sockets and the file system; the platform's clipboard and Mark of the Web are the
+Pure but for sockets and the file system; the platform's clipboard is the
 caller's."""
 
 import os

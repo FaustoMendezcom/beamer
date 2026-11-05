@@ -1425,8 +1425,8 @@ and never makes it a link. It answers, each frame sealed as on a link:
 A `path` is relative, its parts joined by `/`; the recipient refuses the whole transfer for any
 part that is empty, `.` or `..`, holds `< > : " / \ | ? *` or a control character, ends in a dot or
 a space, or is a device name (`CON`, `NUL`, `COM1`...), and for any path that would resolve outside
-the folder it writes into. A file's data must add up to its `size`. The recipient marks each file
-as from another computer (Mark of the Web) where the file system allows.
+the folder it writes into. A file's data must add up to its `size`. The recipient writes the files
+as they are, with no mark that they came from another computer: the user chose each one to send.
 
 **`text`** is a string the receiver types as it stands, for a phone's keyboard, where naming each
 key would lose accents and emoji. The receiver advertises `text` only if it can type any Unicode

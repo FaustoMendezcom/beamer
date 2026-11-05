@@ -20,7 +20,7 @@ OWN = bytes(range(1, 17))
 
 class FakeClipboard:
     def __init__(self):
-        self.seq, self.files, self.marked, self.cleared = 1, None, [], []
+        self.seq, self.files, self.cleared = 1, None, []
 
     def sequence(self):
         return self.seq
@@ -45,9 +45,6 @@ class FakeClipboard:
         self.files = None
         return True
 
-    def mark_from_another_computer(self, path):
-        self.marked.append(path)
-
 
 class FileShareTests(unittest.TestCase):
     def setUp(self):
@@ -69,7 +66,8 @@ class FileShareTests(unittest.TestCase):
         path = os.path.join(destination, "report.pdf")
         with open(path, "wb") as handle:
             handle.write(b"pdf")
-        kwargs["written"](path)
+        # Nothing marks the received file as from another computer.
+        self.assertIsNone(kwargs.get("written"))
         return [path]
 
     def file(self, name, data=b"x"):
@@ -141,13 +139,12 @@ class FileShareTests(unittest.TestCase):
         self.assertEqual(len(served), 1)
         self.assertEqual(len(refused), 1)
 
-    def test_arriving_fetches_marks_and_puts_the_files_on_the_clipboard_for_the_paste_window(self):
+    def test_arriving_fetches_and_puts_the_files_on_the_clipboard_for_the_paste_window(self):
         offer = bytes(range(60, 76))
         self.share.on_message(PEER, ("offer", offer, 1, 3, "report.pdf", "paste"))
         self.share.activate()
         self.assertEqual(len(self.fetched), 1)
         self.assertTrue(self.clipboard.files[0].endswith("report.pdf"))
-        self.assertEqual(self.clipboard.marked, self.clipboard.files)
         self.assertIn("paste within 2 min", self.notes[-1])
         (seconds, expire), = self.timers
         self.assertEqual(seconds, 120)

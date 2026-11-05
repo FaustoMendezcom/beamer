@@ -1,6 +1,7 @@
 """Files on the Windows clipboard: what Explorer copied (CF_HDROP), files received from a peer put
-there as a copy for Explorer to paste, and taking them off again when they expire. Mark of the
-Web on received files, so Windows treats them as coming from another computer.
+there as a copy for Explorer to paste, and taking them off again when they expire. Received files
+carry no Mark of the Web: the user picks every file sent, from a machine they paired, so Windows
+treats them like a copy from a USB stick, not a download (no "blocked", no Protected View).
 
 Kept apart from clipboard_win, which carries text and pictures across: these never travel on a
 link, only their names and sizes do (file_transfer_win)."""
@@ -17,7 +18,6 @@ CF_HDROP = 15
 DROPEFFECT_COPY = 1
 OPEN_TRIES = 10
 OPEN_PAUSE_SECONDS = 0.05
-ZONE_INTERNET = 3
 
 if sys.platform == "win32":
     import win32clipboard
@@ -98,12 +98,3 @@ def clear_if(expected: int) -> bool:
     finally:
         win32clipboard.CloseClipboard()
 
-
-def mark_from_another_computer(path: str) -> None:
-    """Mark of the Web: SmartScreen, Office's Protected View and the "unblock" checkbox apply to a
-    received file as to a download. Not possible on FAT drives; never fatal."""
-    try:
-        with open(path + ":Zone.Identifier", "w", encoding="ascii", newline="") as stream:
-            stream.write(f"[ZoneTransfer]\r\nZoneId={ZONE_INTERNET}\r\n")
-    except OSError:
-        pass

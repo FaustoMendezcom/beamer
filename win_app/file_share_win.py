@@ -269,7 +269,7 @@ class FileShare:
                     label=incoming["label"], size=_size(incoming["total"]), name=name))
             started = time.monotonic()
             tops = self._fetch(host, port, token, self._own_id, incoming["offer"], destination,
-                               cancelled=self._stop, written=self._clipboard.mark_from_another_computer,
+                               cancelled=self._stop,
                                max_bytes=max_bytes)
             seconds = max(time.monotonic() - started, 0.001)
             LOGGER.info("Received %s from %s: %s in %.1f s (%s/s)", incoming["label"], name,
