@@ -334,6 +334,7 @@ class StatusBridge(QObject):
     arrived = Signal(str, str, float, float)
     firewall = Signal(object)
     admin_changed = Signal(object)
+    secure_changed = Signal(object)
     # A pairing this PC hosted finished and was stored: the new peer entry.
     paired = Signal(object)
     # A pairing this PC requested ended: (the entry stored or None, the error or None).
@@ -599,6 +600,7 @@ class WindowsApplication(QWidget):
         self.bridge.arrived.connect(self._on_arrival)
         self.bridge.firewall.connect(self._on_firewall)
         self.bridge.admin_changed.connect(self._on_admin_mode_changed)
+        self.bridge.secure_changed.connect(self._on_secure_changed)
         self.bridge.paired.connect(self._on_paired)
         self.bridge.pair_finished.connect(self._on_pair_finished)
         self.bridge.sending.connect(self._on_sending)
@@ -1430,6 +1432,7 @@ class WindowsApplication(QWidget):
         module.body.addWidget(self.wayland_crossing_note)
         if sys.platform == "win32":
             self._admin_control(module)
+            self._secure_control(module)
         for widget in (self.hold_switch, own_note, hold_note):
             widget.setVisible(not platform_parts.WAYLAND)
         # Wayland owns hiding during capture; it offers no global idle-pointer hide.
@@ -1448,6 +1451,70 @@ class WindowsApplication(QWidget):
         module.body.addWidget(widgets.label(
             tr("Use Windows permission prompts locally."), "note", wrap=True))
         self._refresh_admin_mode()
+
+    def _secure_control(self, module) -> None:
+        """The secure desktop service, which Install-SecureDesktop.ps1 installs: the sign-in and
+        lock screens and UAC prompts, and administrator windows for a standard account."""
+        self.secure_switch = widgets.Switch(tr("Sign-in screen, UAC prompts and administrator windows"))
+        self.secure_switch.setFont(theme.font(theme.TYPE["body"]))
+        self.secure_switch.toggled.connect(self._set_secure)
+        module.body.addWidget(self.secure_switch)
+        self.secure_note = widgets.label("", "note", wrap=True)
+        module.body.addWidget(self.secure_note)
+        self.secure_update = widgets.ActionButton(tr("Update the service"))
+        self.secure_update.clicked.connect(lambda: self._set_secure(True))
+        module.body.addWidget(self.secure_update)
+        self._refresh_secure()
+
+    def _refresh_secure(self) -> None:
+        import secure_setup
+        try:
+            current = secure_setup.state()
+        except Exception:
+            LOGGER.exception("Could not read the secure desktop service")
+            current = secure_setup.State()
+        on = current.installed and current.for_this_beamer and current.elevated_windows
+        self.secure_switch.blockSignals(True)
+        self.secure_switch.setChecked(on)
+        self.secure_switch.blockSignals(False)
+        self.secure_switch.setEnabled(secure_setup.script_path() is not None)
+        self.secure_update.setVisible(on and current.outdated)
+        if current.installed and not on:
+            note = tr("The service is installed for another Beamer or without administrator windows. "
+                      "Turn this on to set it up for this one.")
+        elif on and current.outdated:
+            note = tr("The service runs an older Beamer than this one. Update it so both match.")
+        elif on:
+            note = tr("A Windows service lets other machines use this PC's sign-in and lock screens and UAC "
+                      "prompts, and type into administrator windows. Your password is still needed to sign in.")
+        else:
+            note = tr("Installs a Windows service so other machines can use this PC's sign-in and lock screens "
+                      "and UAC prompts, and type into administrator windows. Windows asks for an administrator's "
+                      "permission.")
+        self.secure_note.setText(note)
+
+    def _set_secure(self, install: bool) -> None:
+        import secure_setup
+        for widget in (self.secure_switch, self.secure_update):
+            widget.setEnabled(False)
+        self.secure_note.setText(tr("Waiting for Windows permission…"))
+
+        def work():
+            result = None
+            try:
+                secure_setup.change(install)
+            except Exception as exc:
+                LOGGER.exception("Could not change the secure desktop service")
+                result = exc
+            self.bridge.secure_changed.emit(result)
+
+        threading.Thread(target=work, name="Beamer-secure-setup", daemon=True).start()
+
+    def _on_secure_changed(self, error) -> None:
+        self._refresh_secure()
+        self.secure_update.setEnabled(True)
+        if error is not None:
+            self.secure_note.setText(str(error))
 
     def _refresh_admin_mode(self) -> None:
         import admin_mode

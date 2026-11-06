@@ -14,7 +14,9 @@ analysis = Analysis(
     binaries=[],
     datas=[(str(source_dir / "Beamer.ico"), "."), (str(source_dir / "assets"), "assets"),
            (str(source_dir.parent / "VERSION"), "."),
-           (str(source_dir / "identify_layer_shell.py"), ".")]
+           (str(source_dir / "identify_layer_shell.py"), "."),
+           # The secure desktop service's installer, which the settings page runs (secure_setup.py).
+           (str(source_dir / "Install-SecureDesktop.ps1"), ".")]
           + [(str(path), "locales") for path in (source_dir.parent / "locales").glob("*.po")],
     # core/effects.py imports its fx_* modules by name, which PyInstaller's analysis cannot see; they are
     # among core_modules. segno is imported inside a try in qr_code.py, so it is named here as well.

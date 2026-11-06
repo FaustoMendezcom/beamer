@@ -4523,6 +4523,18 @@ msgid "Control administrator windows"
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "Sign-in screen, UAC prompts and administrator windows"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "Update the service"
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "The service is installed for another Beamer or without administrator windows. Turn this on to set it up for this one."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Waiting for Windows permission…"
 msgstr ""
 
@@ -4721,6 +4733,10 @@ msgid "Use Windows permission prompts locally."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
+msgid "The service runs an older Beamer than this one. Update it so both match."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
 msgid "Beamer could not read this PC's administrator setting. Restart Beamer to try again."
 msgstr ""
 
@@ -4823,6 +4839,14 @@ msgstr ""
 
 #: win_app/kvm_bridge_win.py
 msgid "Update through your software store, or download the Flatpak from the release page and open it."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "A Windows service lets other machines use this PC's sign-in and lock screens and UAC prompts, and type into administrator windows. Your password is still needed to sign in."
+msgstr ""
+
+#: win_app/kvm_bridge_win.py
+msgid "Installs a Windows service so other machines can use this PC's sign-in and lock screens and UAC prompts, and type into administrator windows. Windows asks for an administrator's permission."
 msgstr ""
 
 #: win_app/kvm_bridge_win.py
@@ -5445,6 +5469,23 @@ msgstr ""
 
 #: win_app/portable_entry.py
 msgid "Beamer Portable"
+msgstr ""
+
+#: win_app/secure_setup.py
+msgid "This Beamer has no secure desktop installer."
+msgstr ""
+
+#: win_app/secure_setup.py
+msgid "Windows could not start the secure desktop installer."
+msgstr ""
+
+#: win_app/secure_setup.py
+#, python-brace-format
+msgid "The secure desktop installer failed: {reason}"
+msgstr ""
+
+#: win_app/secure_setup.py
+msgid "Administrator permission was cancelled. Nothing was changed."
 msgstr ""
 
 #: win_app/sender.py
